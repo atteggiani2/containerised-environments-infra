@@ -4,13 +4,14 @@ on:
     branches:
       - main
     paths:
-      - '**/container/container.def'
+      - 'defaults/container/container.def'
+      - 'environments/*/overrides/container/container.def'
   workflow_dispatch:
     inputs:
         targets:
             description: |
               Comma-separated list of container definition files to build.
-              E.g. "defaults/container/container.def,myenv/overrides/container/container.def".
+              E.g. "defaults/container/container.def,environments/myenv/overrides/container/container.def".
             required: True
 
 jobs:
