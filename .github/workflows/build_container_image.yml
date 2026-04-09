@@ -62,6 +62,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.REPO_CONTENT_WRITE_TOKEN }}
     
       - name: Build singularity images
         shell: bash
