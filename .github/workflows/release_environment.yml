@@ -1,0 +1,27 @@
+name: Release STABLE environment to PRODUCTION
+description: |
+  This workflow deploys STABLE environments to PRODUCTION.
+  It is used to release the environments / modules that will be used in production by the end users
+  on the HPC systems.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Name of the environment to deploy. Must match a subfolder name under this repository's `environments/` directory."
+        required: true
+        type: string
+      version:
+        description: "Version to be deployed (e.g. 1.0.0)"
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy_env.yml
+    with:
+      environment: ${{ inputs.environment }}
+      version: ${{ inputs.version }}
+      staging: true
+      production: true
+      is_stable: true
+    secrets: inherit

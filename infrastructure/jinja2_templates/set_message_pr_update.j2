@@ -1,0 +1,56 @@
+{% set all_deployments = hpc_targets | map(attribute='deployments') | sum(start=[]) | list %}
+{% set n_successful = all_deployments | selectattr('success', 'equalto', 'true') | list | length %}
+{% if n_successful == all_deployments | length %}
+  {% set successful = 'all' %}
+{% elif n_successful == 0 %}
+  {% set successful = 'none' %}
+{% else %}
+  {% set successful = 'some' %}
+{% endif %}
+
+## {{ ':white_check_mark:' if successful == 'all' else ':warning:' if successful == 'some' else ':x:' }} {{ 'Some' if successful == 'some' else 'All' }} Deployments {{ 'Successful' if successful == 'all' else 'Failed' }}
+
+Triggered from commit [{{ commit_sha }}]({{ commit_url }}). For further details, check the [workflow run]({{ workflow_url }}).
+
+{% for hpc_target in hpc_targets %}
+### :desktop_computer: {{ hpc_target.name }}
+
+| Environment Name | Environment Version | Environment Type | Deployment Stage | Status |
+|---|---|---|---|---|
+{%- for deployment in hpc_target.deployments %}
+| {{ deployment.env_name }} | {{ deployment.env_version }} | {{ deployment.env_type }} | {{ deployment.deployment_stage }} | {{ ':white_check_mark:' if deployment.success == 'true' else ':x:' }} |
+{%- endfor %}
+
+{% endfor %}
+
+{% if n_successful > 0 %}
+---
+### :memo: Environment Usage Instructions
+
+{% for hpc_target in hpc_targets %}
+  {% for deployment in hpc_target.deployments %}
+    {% if deployment.success == 'true' %}
+      {% if n_successful == 1 %}
+#### {{ deployment.env_name }}/{{ deployment.env_version }} on {{ hpc_target.name }}
+
+```
+{{ deployment.env_usage_instructions }}
+```
+
+      {% else %}
+<details>
+<summary><b>{{ deployment.env_name }}/{{ deployment.env_version }} on {{ hpc_target.name }}</b></summary>
+
+```
+{{ deployment.env_usage_instructions }}
+```
+
+</details>
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+{% endif %}
+
+---
+_Deployments completed at {{ completed_at }}._

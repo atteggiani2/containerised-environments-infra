@@ -1,0 +1,68 @@
+name: Set message
+description: |
+  Create a message by using jinja2 templating, to be used in different contexts of the
+  environment deployment infrastructure, depending on the provided inputs.
+
+inputs:
+  message-type:
+    description: |
+      The type of message to set. Can be one of:
+      - summary: A message to be added to the step summary
+      - pr-init: A message to be added as a comment in the PR when the deployment is initiated
+      - pr-update: A message to be added as a comment in the PR when the environment deployment ended
+      - pr-cancelled: A message to be added as a comment in the PR when the environment deployment workflow was cancelled
+    type: string
+    required: true
+  data-file:
+    description: A path to the JSON file containing the data to be used in the jinja2 template.
+    type: string
+    required: true
+
+outputs:
+  message-file-path:
+    description: The path to the generated message file
+    value: ${{ steps.set-output.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set jinja template
+      id: set-jinja-template
+      shell: bash
+      run: |
+        if [[ '${{ inputs.message-type }}' == summary ]]; then
+          jinja_template_file=set_message_summary.j2
+        elif [[ '${{ inputs.message-type }}' == pr-init ]]; then
+          jinja_template_file=set_message_pr_init.j2
+        elif [[ '${{ inputs.message-type }}' == pr-update ]]; then
+          jinja_template_file=set_message_pr_update.j2
+        elif [[ '${{ inputs.message-type }}' == pr-cancelled ]]; then
+          jinja_template_file=set_message_pr_cancelled.j2
+        else
+          echo "Invalid message type: ${{ inputs.message-type }}. Must be one of: summary, pr-init, pr-update."
+          exit 1
+        fi
+        echo "jinja-template-file=./infrastructure/jinja2_templates/$jinja_template_file" >> $GITHUB_OUTPUT
+
+
+    - name: Set output path
+      env:
+        OUTPUT_PATH: ${{ github.workspace }}/message_output
+      shell: bash
+      run: echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
+
+    - name: Set message
+      uses: cuchi/jinja2-action@8bd801365a8d36a0b20f45ee969161685de7785a # v1.3.0
+      with:
+        template: ${{ steps.set-jinja-template.outputs.jinja-template-file }}
+        output_file: ${{ env.OUTPUT_PATH }}
+        data_file: ${{ inputs.data-file }}
+        data_format: json
+        strict: true
+    
+    - name: Set output message file path
+      id: set-output
+      shell: bash
+      run: |
+        echo "path=$OUTPUT_PATH" >> $GITHUB_OUTPUT
+      

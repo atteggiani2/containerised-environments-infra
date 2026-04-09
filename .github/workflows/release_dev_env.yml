@@ -1,0 +1,43 @@
+name: Release DEVELOPMENT environment to PRODUCTION
+description: |
+  This workflow deploys DEVELOPMENT environments to PRODUCTION.
+  It should be triggered manually (workflow_dispatch), by specify the environment 
+  to deploy as an input.
+  For example, this can be triggered from the dev package's repository on each new update,
+  to deploy a DEVELOPMENT environment with the latest package updates for testing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Name of the environment to deploy. Must match a subfolder name under this repository's `environments/` directory."
+        required: true
+        type: string
+
+jobs:
+  set_version:
+    name: Set version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set version
+        id: set-version
+        uses: ./.github/actions/set_version
+        with:
+          is_stable: false
+  
+  deploy:
+    name: Deploy DEVELOPMENT ${{ inputs.environment }} environment to PRODUCTION
+    needs: [set_version]
+    uses: ./.github/workflows/deploy_env.yml
+    with:
+      environment: "${{ inputs.environment }}"
+      version: "${{ needs.set_version.outputs.version }}"
+      staging: true
+      production: true
+      is_stable: false
+    secrets: inherit

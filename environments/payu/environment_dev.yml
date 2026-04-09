@@ -1,0 +1,24 @@
+name: payu-dev
+channels:
+  - accessnri
+  - conda-forge
+dependencies:
+  - python==3.10
+  - f90nml
+  - gh
+  - git
+  - nco
+  - pytest
+  - openssh==10.0p1
+  - openssl==3.5.2
+  - xarray
+  - mule
+  - um2nc
+  - accessnri::yamanifest
+  - netcdf4=*=nompi_*
+  - experiment-generator
+  - experiment-runner
+  - mnctools
+  - addmeta
+  - pip:
+    - git+https://github.com/payu-org/payu.git@master

@@ -1,0 +1,224 @@
+name: Test message rendering
+description: |
+  This workflow tests the creation of the hpc_target_deployment_info and all_deployments_info JSON files
+  and rendering of messages (PRs, Step Summary, etc.) by running the create_hpc_target_deployment_info_json.sh script,
+  validating the json files against the schema, and running the set_message action.
+  The messages are displayed as Step Summary of this workflow run.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/actions/set_message/**'
+      - '.github/workflows/test_message_rendering.yml'
+      - 'infrastructure/jinja2_templates/set_message_*.j2'
+      - 'infrastructure/json_schemas/hpc_target_deployment_info.schema.json'
+      - 'infrastructure/json_schemas/all_deployments_info.schema.json'
+      - 'infrastructure/scripts/create_hpc_target_deployment_info_json.sh'
+
+env:
+  SCHEMA_HPC_TARGET_DEPLOYMENT_INFO: infrastructure/json_schemas/hpc_target_deployment_info.schema.json
+  CREATE_HPC_TARGET_DEPLOYMENT_INFO_SCRIPT: infrastructure/scripts/create_hpc_target_deployment_info_json.sh
+  JQ_EXE: jq
+
+jobs:
+  create_hpc_target_deployment_info_jsons:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: target1_success
+            hpc-target: Target
+            module-name: bubbi
+            module-version: "2.0.0"
+            env-type: STABLE
+            deployment-stage: PRODUCTION
+            success: "true"
+            render: true
+          - name: target1_fail
+            hpc-target: Target
+            module-name: another-env
+            module-version: "dev-abcdef-1234567"
+            env-type: DEVELOPMENT
+            deployment-stage: STAGING
+            success: "false"
+            render: false
+          - name: target2_success
+            hpc-target: Target2
+            module-name: cuccio
+            module-version: "1.0"
+            env-type: STABLE
+            deployment-stage: PRODUCTION
+            success: "true"
+            render: false
+          - name: target2_fail
+            hpc-target: Target2
+            module-name: yoyo
+            module-version: "1.0"
+            env-type: STABLE
+            deployment-stage: PRODUCTION
+            success: "false"
+            render: false
+    env:
+      HPC_TARGET_DEPLOYMENT_INFO_JSON: ${{ github.workspace }}/${{ matrix.name }}.json
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create hpc target deployment info JSON
+        env:
+          HPC_TARGET: ${{ matrix.hpc-target }}
+          MODULE_NAME: ${{ matrix.module-name }}
+          MODULE_VERSION: ${{ matrix.module-version }}
+          ENV_TYPE: ${{ matrix.env-type }}
+          STARTED_AT: "1992-04-05T23:55:00 GMT+1"
+          DEPLOYMENT_STAGE: ${{ matrix.deployment-stage }}
+          MODULE_USAGE_INSTRUCTIONS: "${{ matrix.success == 'true' && format('module use /path/to/other/modules\nmodule load {0}/{1}', matrix.module-name, matrix.module-version) }}"
+          ENV_LOCK: "${{ matrix.success == 'true' && 'name: test-dev\nchannels:\n  - accessnri\n  - conda-forge\ndependencies:\n  - python\n  - pip:\n    - git+https://github.com/access-nri/addmeta.git@master' }}"
+          SUCCESS: ${{ matrix.success }}
+        run: bash "$CREATE_HPC_TARGET_DEPLOYMENT_INFO_SCRIPT" "$HPC_TARGET_DEPLOYMENT_INFO_JSON"
+
+      - name: Validate hpc target deployment info JSON against schema
+        run: |
+          npx ajv-cli@5.0.0 validate \
+            --spec=draft7 \
+            -s "$SCHEMA_HPC_TARGET_DEPLOYMENT_INFO" \
+            -d "$HPC_TARGET_DEPLOYMENT_INFO_JSON"
+
+      - name: Test set_message action for summary message
+        if: matrix.render
+        id: set-message-summary
+        uses: ./.github/actions/set_message
+        with:
+          message-type: summary
+          data-file: ${{ env.HPC_TARGET_DEPLOYMENT_INFO_JSON }}
+
+      - name: Set message in the step summary
+        if: matrix.render
+        run: |
+          (
+            echo "# Test Summary Message"
+            echo ""
+            cat "${{ steps.set-message-summary.outputs.message-file-path }}"
+          ) >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload hpc target deployment info JSON as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: hpc_target_deployment_${{ matrix.name }}
+          path: ${{ env.HPC_TARGET_DEPLOYMENT_INFO_JSON }}
+  
+  create_all_deployments_info:
+    needs: create_hpc_target_deployment_info_jsons
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACTS_FOLDER: ${{ github.workspace }}/downloaded_artifacts
+      GH_TOKEN: ${{ github.token }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - json-names: |
+              target1_success
+              target2_success
+              target2_success
+          - json-names: |
+              target1_fail
+              target2_fail
+              target2_success
+          - json-names: |
+              target1_fail
+              target2_fail
+              target2_fail
+          - json-names: |
+              target1_success
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      
+      - name: Download artifacts
+        id: download-artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+
+      - name: Create directory with JSON files
+        run: |
+          ls ${{ steps.download-artifacts.outputs.download-path }}
+          mkdir -p "${{ env.ARTIFACTS_FOLDER }}"
+          i=0
+          while IFS= read -r name; do
+          if [ -n "$name" ]; then
+              src="${{ steps.download-artifacts.outputs.download-path }}/${name}.json"
+              dest="${{ env.ARTIFACTS_FOLDER }}/${name}_${i}.json"
+              echo "Copying $src -> $dest"
+              cp -r "$src" "$dest"
+              i=$((i+1))
+          fi
+          done <<< "${{ matrix.json-names }}"
+
+      - name: Create all_deployments_info JSON
+        id: create-all-deployments-info
+        uses: ./.github/actions/create_all_deployments_info_json
+        with:
+          started-at: "1992-04-05T23:55:00 GMT+1"
+          hpc-target-deployment-info-json-dir: ${{ env.ARTIFACTS_FOLDER }}
+    
+      - name: Test set_message action with pr-update message
+        id: set-pr-update-message
+        uses: ./.github/actions/set_message
+        with:
+          message-type: pr-update
+          data-file: "${{ steps.create-all-deployments-info.outputs.output-file }}"
+      
+      - name: Set pr-update message in the step summary
+        run: |
+          (
+            echo "# Test PR-update Message"
+            echo ""
+            cat "${{ steps.set-pr-update-message.outputs.message-file-path }}"
+          ) >> $GITHUB_STEP_SUMMARY
+    
+  test_pr_init_and_cancelled_message:
+    runs-on: ubuntu-latest
+    env:
+        HPC_TARGET_DEPLOYMENT_INFO_JSON: ${{ github.workspace }}/pr_init_info.json
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create pr_init_info JSON
+        id: create-pr-init-info
+        uses: ./.github/actions/create_pr_init_info_json
+
+      - name: Test set_message action with pr-init message
+        id: set-pr-init-message
+        uses: ./.github/actions/set_message
+        with:
+          message-type: pr-init
+          data-file: "${{ steps.create-pr-init-info.outputs.output-file }}"
+
+      - name: Set pr-init message in the step summary
+        run: |
+          (
+            echo "# Test PR-init Message"
+            echo ""
+            cat "${{ steps.set-pr-init-message.outputs.message-file-path }}"
+          ) >> $GITHUB_STEP_SUMMARY
+      
+      - name: Test set_message action with pr-cancelled message
+        id: set-pr-cancelled-message
+        uses: ./.github/actions/set_message
+        with:
+          message-type: pr-cancelled
+          data-file: "${{ steps.create-pr-init-info.outputs.output-file }}"
+
+      - name: Set pr-cancelled message in the step summary
+        run: |
+          (
+            echo "# Test PR-cancelled Message"
+            echo ""
+            cat "${{ steps.set-pr-cancelled-message.outputs.message-file-path }}"
+          ) >> $GITHUB_STEP_SUMMARY

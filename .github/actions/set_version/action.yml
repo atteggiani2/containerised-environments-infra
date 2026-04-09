@@ -1,0 +1,40 @@
+name: Set version
+description: |
+  Sets the version automatically to:
+  `<dev-prefix><date>-<short-commit-sha><pr-suffix>`
+
+  Where:
+    - <dev-prefix> is "dev-" for DEVELOPMENT environments (is_stable is false) otherwise it is empty
+    - <date> is the date in the format YYYYMMDDTHHMMSS (Australia/Sydney timezone)
+    - <short-commit-sha> is the short commit SHA (7 characters)
+    - <pr-suffix> is "-pr<NUM>" if run within a PR workflow, otherwise it is empty
+
+inputs:
+  is_stable:
+    description: |
+      true for STABLE environments, false for DEVELOPMENT environments.
+      Default is false.
+    type: boolean
+    default: false
+    required: false
+outputs:
+  version:
+    value: ${{ steps.set-version.outputs.version }}
+    description: The generated version string
+runs:
+  using: "composite"
+  steps:
+    - name: Set version
+      id: set-version
+      shell: bash
+      env:
+        TZ: "Australia/Sydney"
+      run: |
+        dev_prefix="${{ inputs.is_stable && '' || 'dev-' }}"
+        date=$(date +%Y%m%dT%H%M%S)
+        sha='${{ github.event.pull_request.head.sha || github.sha }}'
+        short_sha=${sha::7}
+        pr_number='${{ github.event.pull_request.number }}'
+        pr_prefix="${pr_number:+-pr$pr_number}"
+        version="${dev_prefix}${date}-${short_sha}${pr_prefix}"
+        echo "version=$version" >> $GITHUB_OUTPUT

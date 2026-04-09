@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "pr_init_info.schema.json",
+  "type": "object",
+  "required": [
+    "commit_sha",
+    "commit_url",
+    "workflow_url",
+    "started_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "commit_sha": { "type": "string" },
+    "commit_url": { "type": "string" },
+    "workflow_url": { "type": "string" },
+    "started_at": { "type": "string" }
+  }
+}

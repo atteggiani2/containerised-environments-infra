@@ -1,0 +1,15 @@
+#%Module1.0
+
+# The double underscore variables within this file are replaced by the 'replace_dunder_variables'
+# function within the build.sh or deploy.sh scripts
+
+# Prepend environment bin directory (where all launcher symlinks are located) to PATH
+prepend-path PATH "__ENV_BIN_DIR__"
+
+# Set CONDA_PROMPT_MODIFIER
+setenv CONDA_PROMPT_MODIFIER "__ENV_PROMPT_MODIFIER__"
+# Set CONDA_PREFIX
+setenv CONDA_PREFIX "__INTERNAL_ENV_DIR__"
+
+# Load singularity
+module load singularity

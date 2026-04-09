@@ -1,0 +1,7 @@
+name: test
+channels:
+  - accessnri
+  - conda-forge
+dependencies:
+  - python
+  - addmeta

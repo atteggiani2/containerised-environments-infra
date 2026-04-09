@@ -1,0 +1,24 @@
+{% for deployment in deployments %}
+## :rocket: Deployed _{{ deployment.env_name }}_ environment on :desktop_computer: {{ name }}
+
+**HPC Target:** {{ name }}
+**Environment Name:** {{ deployment.env_name }}
+**Environment Version:** {{ deployment.env_version }}
+**Environment Type:** {{ deployment.env_type }}
+**Deployment Stage:** {{ deployment.deployment_stage }}
+
+To use the environment on _{{ name }}_, run the following commands:
+```
+{{ deployment.env_usage_instructions }}
+```
+
+<details>
+<summary><b>Environment lock</b></summary>
+
+```yaml
+{{ deployment.env_lock }}
+```
+
+</details>
+
+{% endfor %}

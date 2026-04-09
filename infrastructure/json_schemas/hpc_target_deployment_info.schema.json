@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hpc_target_deployment_info.schema.json",
+  "type": "object",
+  "required": ["name", "deployments"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the HPC target for the deployment (e.g. Gadi, Setonix)"
+    },
+    "deployments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+            "env_name", 
+            "env_version", 
+            "env_type", 
+            "deployment_stage", 
+            "env_usage_instructions", 
+            "env_lock",
+            "started_at",
+            "completed_at",
+            "success"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "env_name": { "type": "string", "minLength": 1 },
+          "env_version": { "type": "string", "minLength": 1 },
+          "env_type": {
+            "type": "string",
+            "enum": ["DEVELOPMENT", "STABLE"]
+          },
+          "deployment_stage": {
+            "type": "string",
+            "enum": ["STAGING", "PRODUCTION"]
+          },
+          "env_usage_instructions": { "type": "string" },
+          "env_lock": { "type": "string" },
+          "started_at": { "type": "string", "minLength": 1 },
+          "completed_at": { "type": "string" },
+          "success": {
+            "type": "string",
+            "enum": ["true", "false", ""]
+          }
+        }
+      }
+    }
+  }
+}

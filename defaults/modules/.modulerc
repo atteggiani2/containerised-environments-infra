@@ -1,0 +1,6 @@
+#%Module1.0
+
+# The double underscore variables within this file are replaced by the 'replace_dunder_variables'
+# function within the build.sh or deploy.sh scripts
+
+module-version __MODULE_NAME__/__MODULE_VERSION__ default

@@ -1,0 +1,104 @@
+name: Create all_deployments_info JSON file
+description: |
+  Create a JSON file containing information about all deployments created as part of the workflow run.
+  This action is used to generate a summary JSON file containing information about all deployments, 
+  which is also used for rendering messages in pull requests.
+  The generated JSON file is validated against the all_deployments_info.schema.json JSON schema
+
+inputs:
+  hpc-target-deployment-info-json-dir:
+    description: |
+      Directory containing all the hpc target deployment information JSON files to use for the creation
+      of the all_deployments_info JSON file.
+    required: true
+  started-at:
+    description: "Deployment workflow start time"
+    required: true
+  output-file:
+    description: "Path to write the output JSON file"
+    required: false
+    default: all_deployments_info.json
+outputs:
+  output-file:
+    description: "Path to the created JSON file"
+    value: ${{ steps.validate-json.outputs.output-file }}
+
+runs:
+  using: composite
+  steps:
+    # Merge HPC target deployment info JSONs with the same name by concatenating their deployments arrays
+    - name: Merge deployment info JSONs
+      id: merge-jsons
+      shell: bash
+      env:
+        JSON_DIR: ${{ inputs.hpc-target-deployment-info-json-dir }}
+      run: |
+        # Make sure the directory exists
+        if [[ ! -d "$JSON_DIR" ]]; then
+          echo ":error:Directory '$JSON_DIR' does not exist."
+          exit 1
+        fi
+        # Find all JSON files in the JSON directory
+        mapfile -t json_files < <(find "$JSON_DIR" -maxdepth 1 -name "*.json" -type f)
+        # Make sure at least one file is found
+        if [[ ${#json_files[@]} -eq 0 ]]; then
+          echo ":error:No JSON files found in '$JSON_DIR'."
+          exit 1
+        fi
+        # Merge HPC target deployment info JSONs with the same name by concatenating their deployments arrays
+        merged_jsons=$(
+          cat "${json_files[@]}" | \
+          jq -cs '
+            group_by(.name) |
+            map({
+              name: .[0].name,
+              deployments: map(.deployments) | add
+            })
+          '
+        )
+        echo "merged-jsons=$merged_jsons" >> $GITHUB_OUTPUT
+
+    
+    - name: Create all_deployments_info JSON
+      shell: bash
+      env:
+        COMMIT_SHA: ${{ github.sha }}
+        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        STARTED_AT: ${{ inputs.started-at }}
+        MERGED_JSONS: ${{ steps.merge-jsons.outputs.merged-jsons }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        completed_at=$(TZ='Australia/Sydney' date '+%FT%T %Z')
+        # Generate JSON file
+        jq -n \
+          --arg commit_sha             "$COMMIT_SHA" \
+          --arg commit_url             "$COMMIT_URL" \
+          --arg workflow_url           "$WORKFLOW_URL" \
+          --arg started_at             "$STARTED_AT" \
+          --arg completed_at           "$completed_at" \
+          --argjson hpc_targets "$MERGED_JSONS" \
+          '{
+            commit_sha:         $commit_sha,
+            commit_url:         $commit_url,
+            workflow_url:       $workflow_url,
+            started_at:         $started_at,
+            completed_at:       $completed_at,
+            hpc_targets: $hpc_targets
+          }' > "$OUTPUT_FILE"
+
+    - name: Validate JSON against schema
+      id: validate-json
+      shell: bash
+      env:
+        SCHEMA_HPC_TARGET_DEPLOYMENT_INFO: infrastructure/json_schemas/hpc_target_deployment_info.schema.json
+        SCHEMA_ALL_DEPLOYMENTS_INFO: infrastructure/json_schemas/all_deployments_info.schema.json
+        OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        npx ajv-cli@5.0.0 validate \
+          --spec=draft7 \
+          -s "$SCHEMA_ALL_DEPLOYMENTS_INFO" \
+          -r "$SCHEMA_HPC_TARGET_DEPLOYMENT_INFO" \
+          -d "$OUTPUT_FILE"
+        # Set output
+        echo "output-file=$OUTPUT_FILE" >> $GITHUB_OUTPUT

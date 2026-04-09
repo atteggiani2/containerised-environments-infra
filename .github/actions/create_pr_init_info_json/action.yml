@@ -1,0 +1,60 @@
+name: Create pr_init_info JSON file
+description: |
+  Create a JSON file containing information to initialise a PR message about ongoing deployments.
+  The generated JSON file is validated against the pr_init_info.schema.json JSON schema
+
+inputs:
+  output-file:
+    description: "Path to write the output JSON file"
+    required: false
+    default: pr_init_info.json
+outputs:
+  output-file:
+    description: "Path to the created JSON file"
+    value: ${{ steps.validate-json.outputs.output-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Get date
+      id: get-date
+      shell: bash
+      run: |
+        started_at=$(TZ='Australia/Sydney' date '+%FT%T %Z')
+        echo "started_at=$started_at" >> $GITHUB_OUTPUT
+    
+    - name: Create pr_init_info JSON
+      shell: bash
+      env:
+        COMMIT_SHA: ${{ github.sha }}
+        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        STARTED_AT: ${{ steps.get-date.outputs.started_at }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        # Generate JSON file
+        jq -n \
+          --arg commit_sha             "$COMMIT_SHA" \
+          --arg commit_url             "$COMMIT_URL" \
+          --arg workflow_url           "$WORKFLOW_URL" \
+          --arg started_at             "$STARTED_AT" \
+          '{
+            commit_sha:         $commit_sha,
+            commit_url:         $commit_url,
+            workflow_url:       $workflow_url,
+            started_at:         $started_at
+          }' > "$OUTPUT_FILE"
+
+    - name: Validate JSON against schema
+      id: validate-json
+      shell: bash
+      env:
+        SCHEMA_PR_INIT_INFO: infrastructure/json_schemas/pr_init_info.schema.json
+        OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        npx ajv-cli@5.0.0 validate \
+          --spec=draft7 \
+          -s "$SCHEMA_PR_INIT_INFO" \
+          -d "$OUTPUT_FILE"
+        # Set output
+        echo "output-file=$OUTPUT_FILE" >> $GITHUB_OUTPUT

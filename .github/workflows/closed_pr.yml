@@ -1,0 +1,128 @@
+name: Closed PR
+description: |
+  This workflow triggers whenever a PR is closed, and performs the following tasks:
+  
+  - If the Pull Request is merged:    
+    - If the changes involve any `environments/*/environment_dev.yml` spec file, for each
+      environment subfolder changed a DEVELOPMENT environment is deployed to PRODUCTION
+      (even if there were also changes to its `environment.yml` spec file).
+    - If the changes don't involve any `environments/*/environment_dev.yml` spec file,
+      no environment is deployed, and all the STAGING environments that were deployed from the
+      PR are deleted.
+
+  - If the Pull Request is not merged, no environment is deployed, and all the STAGING environments
+    that were deployed from the PR are deleted.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths-ignore: ['.github/**']
+
+env:
+  TEST_ENV: ${{ vars.TEST_ENV }}
+
+jobs:
+  get_changed_environments:
+    name: Get changed environments
+    runs-on: ubuntu-latest
+    outputs:
+      envs_to_deploy: ${{ steps.changed.outputs.envs_to_deploy }}
+      envs_to_delete: ${{ steps.changed.outputs.envs_to_delete }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # If the PR was merged, we use `github.event.pull_request.merge_commit_sha`, otherwise
+      # we use `github.event.pull_request.head.sha` to get the changes introduced by the PR
+      - name: Get changed environments
+        id: changed
+        run: |
+          if [[ '${{ github.event.pull_request.merged }}' == true ]]; then
+            head_sha=${{ github.event.pull_request.merge_commit_sha }}
+          else
+            head_sha=${{ github.event.pull_request.head.sha }}
+          fi
+          env_changes=$(
+            git diff --name-only \
+              ${{ github.event.pull_request.base.sha }}...${head_sha} -- \
+              environments/
+          )
+          
+          envs_to_delete=[]
+          envs_to_deploy=[]
+
+          if [ -z "$env_changes" ]; then
+            # No changes in the `environments` folder.
+            # Delete STAGING TEST_ENV environments
+            envs_to_delete=$(jq -cn --arg e '${{ env.TEST_ENV }}' '[$e]')
+          else
+            # Get unique environment names that changed
+            envs=$(
+              echo "$env_changes" \
+              | cut -d'/' -f2 \
+              | sort -u \
+            )
+            is_merged=${{ github.event.pull_request.merged }}
+            for env in $envs; do
+              if [[ "$is_merged" == true ]] && echo "$env_changes" | grep -q "^environments/$env/environment_dev.yml"; then
+                # If the PR was merged and there is a change in the `environment_dev.yml` spec file,
+                # deploy a DEVELOPMENT environment to PRODUCTION
+                envs_to_deploy=$(echo "$envs_to_deploy" | jq -c --arg e "$env" '. += [$e]')
+              else
+                # Otherwise only delete the STAGING environments that were deployed from the PR
+                envs_to_delete=$(echo "$envs_to_delete" | jq -c --arg e "$env" '. += [$e]')
+              fi
+            done
+          fi
+          echo "envs_to_deploy=$envs_to_deploy" >> $GITHUB_OUTPUT
+          echo "envs_to_delete=$envs_to_delete" >> $GITHUB_OUTPUT
+
+  set_version:
+    name: Set version
+    runs-on: ubuntu-latest
+    needs: get_changed_environments
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+    # Only run if there are envs to deploy
+    if: needs.get_changed_environments.outputs.envs_to_deploy != '[]'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set version
+        id: set-version
+        uses: ./.github/actions/set_version
+        with:
+          is_stable: false
+  
+  deploy_development_production:
+    name: Deploy DEVELOPMENT ${{ matrix.environment }} environment to PRODUCTION
+    needs: [get_changed_environments, set_version]
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.get_changed_environments.outputs.envs_to_deploy) }}
+    uses: ./.github/workflows/deploy_env.yml
+    with:
+      environment: "${{ matrix.environment }}"
+      version: "${{ needs.set_version.outputs.version }}"
+      staging: true
+      production: true
+      is_stable: false
+    secrets: inherit
+  
+  delete_staging_environments:
+    name: Delete STAGING environments deployed from PR ${{ github.event.pull_request.number }}
+    needs: [get_changed_environments]
+    if: needs.get_changed_environments.outputs.envs_to_delete != '[]'
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.get_changed_environments.outputs.envs_to_delete) }}
+    uses: ./.github/workflows/deploy_env.yml
+    with:
+      environment: "${{ matrix.environment }}"
+      staging: false
+      production: false
+      is_stable: false
+    secrets: inherit

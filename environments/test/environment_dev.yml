@@ -1,0 +1,8 @@
+name: test-dev 
+channels:
+  - accessnri
+  - conda-forge
+dependencies:
+  - python
+  - pip:
+    - git+https://github.com/access-nri/addmeta.git@master

@@ -1,0 +1,355 @@
+name: Deploy containerised environment
+description: |
+  Deploy a containerised environment to the HPC system.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: |
+          Name of the environment to deploy. 
+          Must match a subfolder name under this repository's `environments/` directory.
+        required: true
+        type: string
+      version:
+        description: |
+          Version to deploy (e.g., 1.0.0).
+          Required if any of staging, test, or production is true.
+        required: false
+        default: dummy_version
+        type: string
+      staging:
+        description: |
+          Deploy the environment to the STAGING directory.
+          Default is true.
+        type: boolean
+        required: false
+        default: true
+      production:
+        description: |
+          Deploy the environment module to the PRODUCTION directory.
+          Default is false.
+        type: boolean
+        required: false
+        default: false
+      is_stable:
+        description: |
+            true for STABLE environments, false for DEVELOPMENT environments.
+            Default is false.
+        type: boolean
+        default: false
+        required: false
+
+jobs:
+  sanity_checks:
+    name: Sanity checks
+    runs-on: ubuntu-latest
+    steps:
+      # Check that if staging or production is true, then version must be provided
+      - name: Check version input
+        run: |
+          if [[ '${{ inputs.staging }}' == true || \
+             '${{ inputs.production }}' == true ]] && \
+             [[ '${{ inputs.version }}' == dummy_version ]]; then
+            echo "::error::'version' input must be provided when at least one of 'staging', 'test', or 'production' is true."
+            exit 1
+          fi
+      # Check that if production is true, then staging must be true
+      - name: Check staging input
+        run: |
+          if [[ '${{ inputs.production }}' == true && '${{ inputs.staging }}' == false ]]; then
+            echo "::error::'staging' input must be true when 'production' is true."
+            exit 1
+          fi
+
+  get-date:
+    name: Get current date
+    runs-on: ubuntu-latest
+    outputs:
+      date: ${{ steps.get-date.outputs.date }}
+    steps:
+      - name: Get date
+        id: get-date
+        run: |
+          date=$(TZ='Australia/Sydney' date '+%FT%T %Z')
+          echo "date=$date" >> "$GITHUB_OUTPUT"
+
+  # We take the HPC targets for the deployment from the hpc_targets file 
+  # and place them in a JSON array to be used in the deployment job
+  # with a matrix strategy
+  get-hpc-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      hpc-targets: ${{ steps.get-targets.outputs.hpc-targets }}
+    env:
+      HPC_TARGETS_FILENAME: hpc_targets
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      
+      - name: Get HPC targets
+        id: get-targets
+        run: |
+          # First check for a file in the overrides folder
+          hpc_targets_file="environments/${{ inputs.environment }}/overrides/$HPC_TARGETS_FILENAME"
+          if [[ ! -f "$hpc_targets_file" ]]; then
+            hpc_targets_file="defaults/$HPC_TARGETS_FILENAME"
+            if [[ ! -f "$hpc_targets_file" ]]; then
+              echo "No HPC targets file found at '$hpc_targets_file'. Please provide one to specify the HPC targets for the deployment."
+              exit 1
+            fi
+          fi
+          # Get unique HPC targets from the file and set as output in JSON array format
+          targets=$(
+            jq -Rcs 'split("\n") | map(select(length > 0)) | unique' \
+              "$hpc_targets_file"
+          )
+          echo "hpc-targets=$targets" >> $GITHUB_OUTPUT
+          echo "hpc-targets-file=$hpc_targets_file" >> $GITHUB_OUTPUT
+
+      # Make sure that all HPC targets specified exist as GitHub Environments in the repository
+      - name: Sanity check on HPC targets
+        run: |
+          endpoint='repos/{owner}/{repo}/environments'
+          for target in $(echo "${{ steps.get-targets.outputs.hpc-targets }}" | jq -r '.[]'); do
+            if ! gh api "$endpoint/$target" &> /dev/null; then
+              msg="HPC target '$target' does not exist as a GitHub Environment in this repository.%0A"
+              msg+="Please create a GitHub Environment with this name or remove it from the '${{ steps.get-targets.outputs.hpc-targets-file }}' file."
+              echo "::error::$msg"
+              exit 1
+            fi
+          done
+
+  deploy:
+    needs: [sanity_checks, get-date, get-hpc-targets]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        hpc-target: ${{ fromJson(needs.get-hpc-targets.outputs.hpc-targets) }}
+      fail-fast: false
+    environment: ${{ matrix.hpc-target }}
+    env:
+      GROUP_OWNER: '${{ vars.GROUP_OWNER }}'
+      OWNER: '${{ vars.OWNER }}'
+      PBS_PROJECT: '${{ vars.PBS_PROJECT }}'
+      PBS_STORAGE: '${{ vars.PBS_STORAGE }}'
+      SINGULARITY_EXE: '${{ vars.SINGULARITY_EXE }}'
+      JQ_EXE: '${{ vars.JQ_EXE }}'
+      STABLE_PRODUCTION_BASE_DIR: '${{ vars.STABLE_PRODUCTION_BASE_DIR }}'
+      ENV_CONFIG_FILENAME: .env_config
+      MODULE_NAME: '${{ inputs.environment }}'
+      MODULE_VERSION: '${{ inputs.version }}'
+      ENV_TYPE: ${{ inputs.is_stable == true && 'STABLE' || 'DEVELOPMENT' }}
+      HPC_TARGET: ${{ matrix.hpc-target }}
+      STARTED_AT: ${{ needs.get-date.outputs.date }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      
+      - name: Set debug mode
+        run: |
+          # echo "CONTAINERISED_ENVS_DEBUG=${{ runner.debug }}" >> $GITHUB_ENV
+          echo "CONTAINERISED_ENVS_DEBUG=1" >> $GITHUB_ENV
+      
+      # Sanity check that all needed GitHub vars are set for the target GitHub Environment
+      - name: Check GitHub Environment configuration
+        run: |
+          if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+            set -x
+          fi
+          vars_unset=false
+          vars=(
+            GROUP_OWNER
+            OWNER
+            PBS_PROJECT
+            PBS_STORAGE
+            SINGULARITY_EXE
+            STABLE_PRODUCTION_BASE_DIR
+          )
+          for var in "${vars[@]}"; do
+            if [[ -z "${!var:-}" ]]; then
+              msg="Variable '${var}' is unset or empty in the '${{ matrix.hpc-target }}' GitHub Environment."
+              msg+="Set this variable before running this workflow.%0A"
+              msg+="For further information, see the README section 'GitHub Environment Setup'."
+              echo "::error::$msg"
+              vars_unset=true
+            fi
+          done
+          [[ $vars_unset == true ]] && exit 1 || true
+  
+      - name: Set up SSH
+        uses: access-nri/actions/.github/actions/setup-ssh@main
+        id: ssh
+        with:
+          hosts: |
+            ${{ secrets.HOST }}
+            ${{ secrets.HOST_DATA }}
+          private-key: ${{ secrets.SSH_KEY }}
+
+      # We create a temporary repository directory on the HPC system and set its path 
+      # as a GitHub environment variable that can be used in subsequent steps.
+      - name: Create repository directory
+        id: create-repo-dir
+        run: |
+          set -u
+          if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+            set -x
+          fi
+          repo_path=$(
+            ssh -v ${{ secrets.USER }}@${{ secrets.HOST }} \
+            -i ${{ steps.ssh.outputs.private-key-path }} \
+            mktemp -d
+          )
+          echo "REPO_PATH=$repo_path" >> $GITHUB_ENV
+      
+      # We set the env variable that stores the path to the hpc_target_deployment_info.json file containing information about the
+      # deployment to pass the GitHub runner.
+      # For simplicity, we set this path to be within the REPO_PATH dir that has already been created. This way, the file will
+      # also be deleted at the end of the workflow when we delete the REPO_PATH directory.
+      # We also set the path to the hpc_target_deployment_info.json file on the GitHub runner, which we will use to retrieve
+      # the file from the HPC system and upload it as an artifact at the end of the workflow.
+      - name: Set hpc_target_deployment_info.json path env variable
+        run: |
+          json_name='hpc_target_deployment_info_${{ job.check_run_id }}.json'
+          echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH=$json_name" >> $GITHUB_ENV
+          echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER=${{ github.workspace }}/$json_name" >> $GITHUB_ENV
+
+      # We create the ENV_CONFIG_FILENAME bash script that exports multiple configuration 
+      # env variables when sourced. 
+      # This will allow us to source the script in any following step to have the CI environment 
+      # ready within the HPC system.
+      - name: Set configuration env script
+        run: bash infrastructure/scripts/write_env_exports.sh
+
+      - name: Sync repository to HPC system
+        id: sync-repo
+        run: |
+          set -euo pipefail
+          if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+            set -x
+          fi
+          rsync -e 'ssh -i ${{ steps.ssh.outputs.private-key-path }}' \
+            -avz \
+            --delete \
+            --exclude=/.git/ \
+            --exclude=/.github/ \
+            ./ \
+            "${{ secrets.USER }}@${{ secrets.HOST_DATA }}:$REPO_PATH"
+
+      - name: Initialise Admin dirs
+        if: inputs.staging
+        run: |
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.ssh.outputs.private-key-path }} /bin/bash <<EOT
+            set -euo pipefail
+            if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+              set -x
+            fi
+            # Set configuration environment
+            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            "\$INFRA_SCRIPTS_DIR/initialise_admin_dirs.sh"
+          EOT
+
+      - name: Deploy staging environment
+        if: inputs.staging
+        id: deploy-staging
+        run: |
+          # Run deployment
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} \
+            -i ${{ steps.ssh.outputs.private-key-path }} \
+            /bin/bash <<EOT
+            set -euo pipefail
+            if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+              set -x
+            fi
+            # Set configuration environment
+            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            # Set job name prefix
+            export JOB_NAME_PREFIX=staging
+            # Set DEPLOYMENT_STAGE to STAGING
+            export DEPLOYMENT_STAGE=STAGING
+            "\$INFRA_SCRIPTS_DIR/submit_pbs_job.sh" "\$INFRA_SCRIPTS_DIR/build_and_deploy_env.sh"
+          EOT
+      
+      - name: Deploy production environment
+        if: inputs.production
+        id: deploy-production
+        run: |
+          # Run deployment
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} \
+            -i ${{ steps.ssh.outputs.private-key-path }} \
+            /bin/bash <<EOT
+            set -euo pipefail
+            if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+              set -x
+            fi
+            # Set configuration environment
+            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            # Set job name prefix
+            export JOB_NAME_PREFIX=production
+            # Set DEPLOYMENT_STAGE to PRODUCTION
+            export DEPLOYMENT_STAGE=PRODUCTION
+            "\$INFRA_SCRIPTS_DIR/submit_pbs_job.sh" "\$INFRA_SCRIPTS_DIR/build_and_deploy_env.sh"
+          EOT
+    
+      - name: Get hpc_target_deployment_info JSON
+        # We always run this if any deployment is triggered, even if it failed (i.e., inputs.staging=true)
+        # We try to retrieve the hpc_target_deployment_info.json file created by the deployment job.
+        # If we fail, we create the hpc_target_deployment_info.json file.
+        if: always() && !cancelled() && inputs.staging == true
+        id: get-deployment-info
+        run: |
+          if ! rsync -e "ssh -i ${{ steps.ssh.outputs.private-key-path }}" \
+            ${{ secrets.USER }}@${{ secrets.HOST }}:"$HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH" \
+            "$HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER"; then
+              echo "::warning::Failed to retrieve hpc_target_deployment_info JSON file from HPC system. Creating JSON file:"
+              # set SUCCESS and DEPLOYMENT_STAGE for the create_hpc_target_deployment_info_json.sh script
+              export SUCCESS=false
+              export DEPLOYMENT_STAGE=${{ inputs.production == true && 'PRODUCTION' || 'STAGING' }}
+              bash infrastructure/scripts/create_hpc_target_deployment_info_json.sh "$HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER"
+          fi
+    
+      - name: Set message for summary
+        # We always run this if the get-deployment-info step succeeds.
+        if: always() && !cancelled() && steps.get-deployment-info.outcome == 'success'
+        id: set-message-summary
+        uses: ./.github/actions/set_message
+        with:
+          message-type: summary
+          data-file: ${{ env.HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER }}
+
+      - name: Set message in the step summary
+        # We always run this if the set-message-summary step succeeds.
+        if: always() && !cancelled() && steps.set-message-summary.outcome == 'success'
+        run: cat "${{ steps.set-message-summary.outputs.message-file-path }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Save hpc_target_deployment_info JSON as an artifact
+        # We always run this if the get-deployment-info step succeeds.
+        if: always() && !cancelled() && steps.get-deployment-info.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ env.HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER }}
+          name: deployment_${{ matrix.hpc-target }}_${{ inputs.environment }}_${{ inputs.version }}
+    
+      - name: Delete staging files
+        # Delete staging files if we deploy to production, or if there are no deployments 
+        # (e.g., closed PR without merging)
+        if: inputs.production == true || inputs.staging == false
+        run: |
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.ssh.outputs.private-key-path }} /bin/bash <<EOT
+            set -euo pipefail
+            if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+              set -x
+            fi
+            # Set configuration environment
+            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            # Delete staging files
+            "\$INFRA_SCRIPTS_DIR/delete_staging_files.sh" ${{ github.event.number }}
+          EOT
+
+      - name: Delete repository on HPC system
+        if: always() && steps.sync-repo.outcome == 'success'
+        run: |
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} \
+            -i ${{ steps.ssh.outputs.private-key-path }} /bin/bash <<EOT
+            rm -rf '$REPO_PATH'
+          EOT
