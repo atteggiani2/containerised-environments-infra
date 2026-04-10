@@ -123,6 +123,9 @@ jobs:
   deploy:
     needs: [sanity_checks, get-date, get-hpc-targets]
     runs-on: ubuntu-latest
+    concurrency:
+      group: "${{ matrix.hpc-target }}-${{ inputs.environment }}-${{ inputs.version }}"
+      cancel-in-progress: true
     strategy:
       matrix:
         hpc-target: ${{ fromJson(needs.get-hpc-targets.outputs.hpc-targets) }}
@@ -211,7 +214,7 @@ jobs:
       - name: Set hpc_target_deployment_info.json path env variable
         run: |
           json_name='hpc_target_deployment_info_${{ job.check_run_id }}.json'
-          echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH=$json_name" >> $GITHUB_ENV
+          echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH=$REPO_PATH/$json_name" >> $GITHUB_ENV
           echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER=${{ github.workspace }}/$json_name" >> $GITHUB_ENV
 
       # We create the ENV_CONFIG_FILENAME bash script that exports multiple configuration 
@@ -332,7 +335,7 @@ jobs:
     
       - name: Delete staging files
         # Delete staging files if we deploy to production, or if there are no deployments 
-        # (e.g., closed PR without merging)
+        # (e.g., closed PR)
         if: inputs.production == true || inputs.staging == false
         run: |
           ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.ssh.outputs.private-key-path }} /bin/bash <<EOT

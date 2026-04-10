@@ -30,7 +30,7 @@ runs:
       env:
         TZ: "Australia/Sydney"
       run: |
-        dev_prefix="${{ inputs.is_stable && '' || 'dev-' }}"
+        dev_prefix=$([[ '${{ inputs.is_stable }}' == true ]] && echo '' || echo 'dev-')
         date=$(date +%Y%m%dT%H%M%S)
         sha='${{ github.event.pull_request.head.sha || github.sha }}'
         short_sha=${sha::7}

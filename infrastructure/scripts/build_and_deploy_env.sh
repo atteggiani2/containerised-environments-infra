@@ -22,7 +22,7 @@ source "$CONFIG"
 
 ### Initialise directories
 # Make sure the target environment directory does not already exist, to avoid accidentally overwriting an existing environment.
-if [[ -d "$ENV_DIR" ]]; then
+if [[ -d "$ENV_VERSION_DIR" ]]; then
     echo "Error! Environment version '$MODULE_NAME/$MODULE_VERSION' already exists." >&2
     exit 1
 fi
@@ -32,13 +32,13 @@ cleanup_env() {
     # _exit_status is initialised within the trap_append function
     if [ $_exit_status -ne 0 ]; then
         echo "Error! Build failed. Cleaning up environment version '$MODULE_NAME/$MODULE_VERSION' related files..." >&2
-        delete_version
+        delete_files_in_manifest
     fi
 }
 trap_append cleanup_env EXIT
 
 echo 'Initialising directories...'
-mkdir -pv "$ENV_DIR"
+mkdir -pv "$ENV_VERSION_DIR"
 mkdir -pv "$MODULE_DIR"
 mkdir -pv "$ENV_BIN_DIR"
 mkdir -pv "$(dirname "$TEMP_ENV_DIR")"
@@ -64,7 +64,7 @@ trap_append update_hpc_target_deployment_info EXIT
 cat > "$MANIFEST_FILE_PATH" <<EOF
 $MODULE_FILE_PATH
 $ACTIVATION_SCRIPT_PATH
-$ENV_DIR
+$ENV_VERSION_DIR
 EOF
 
 ### UPDATE CONTAINER IMAGE

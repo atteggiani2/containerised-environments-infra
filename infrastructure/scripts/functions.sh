@@ -26,7 +26,7 @@ function trap_append() {
     trap "${existing_cmds}${cmd} ; " "$sig"
 }
 
-function delete_version() {
+function delete_files_in_manifest() {
     # Delete all files and folders associated with a version, which are listed in the manifest $1.
     # If $1 is not provided, it defaults to the MANIFEST_FILE_PATH for the current environment version.
     local manifest_file="${1:-$MANIFEST_FILE_PATH}"

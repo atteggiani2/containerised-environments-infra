@@ -5,54 +5,65 @@ description: |
   
   - If the changes involve the `environments` folder, for each environment subfolder changed:
 
-    - If the changes involve the `environment_dev.yml`, a DEVELOPMENT environment
-      is deployed to STAGING (even if there are also changes to the `environment.yml`)
-    - If the changes don't involve the `environment_dev.yml`, a STABLE environment
-      is deployed to STAGING
+    - If the changes involve the `environment_dev.yml` (but not the `environment.yml`),
+      a DEVELOPMENT environment is deployed to STAGING
+    - If the changes involve the `environment.yml` (but not the `environment_dev.yml`),
+      a STABLE environment is deployed to STAGING
+    - If the changes involve both the `environment_dev.yml` and `environment.yml`,
+      both a STABLE and DEVELOPMENT environment is deployed to STAGING
+    - If the changes don't involve either of the environment spec files (e.g., changes in an override file)
+      a STABLE environment is deployed to STAGING
 
-  - If the changes don't involve the `environments` folder (for example any change to the 
+  - If the changes don't involve the `environments` folder (for example any change to the
     `defaults` folder), a STABLE 'test' environment is deployed to STAGING.
-    We use the 'test' environment as a test case only for infrastuture automatic testing in CI
+    We use the 'test' environment as an example for infrastuture automatic testing within CI
 
 on:
   pull_request:
     types: [opened, synchronize]
-    branches: [main]
-    paths-ignore: ['.github/**']
+    branches: main
 
 env:
   TEST_ENV: ${{ vars.TEST_ENV }}
   COMMENT_LABEL: 'deployment-${{ github.sha }}'
 
 jobs:
+  parse_changed_files:
+    name: Parse changed files
+    runs-on: ubuntu-latest
+    outputs:
+      containers: ${{ steps.changed-files.outputs.containers }}
+      dev_envs: ${{ steps.changed-files.outputs.dev_envs }}
+      dev_envs_files: ${{ steps.changed-files.outputs.dev_envs_files }}
+      stable_envs: ${{ steps.changed-files.outputs.stable_envs }}
+      stable_envs_files: ${{ steps.changed-files.outputs.stable_envs_files }}
+      non_envs: ${{ steps.changed-files.outputs.non_envs }}
+      non_containers: ${{ steps.changed-files.outputs.non_containers }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Parse changed files
+        id: changed-files
+        uses: ./.github/actions/parse_changed_files
+
   sanity_checks:
     name: Sanity checks
     runs-on: ubuntu-latest
+    needs: parse_changed_files
+    env:
+      CONTAINERS_CHANGES: ${{ needs.parse_changed_files.outputs.containers }}
+      NON_CONTAINERS_CHANGES: ${{ needs.parse_changed_files.outputs.non_containers }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
       # Since we have the built container images within the repos, and we automatically build them
       # whenever there is a change to a container definition file, we need to make sure that, if this
       # workflow is triggered by a pull request, no changes to a container definition or built image
-      # are found, otherwise we might end up deploying an environment using a different container that
-      # the one we are supposed to be testing and deploying. 
+      # are found together with other changes, otherwise we might end up deploying an environment
+      # using a different container to the one we are supposed to be testing and deploying.
       - name: Sanity check on container-related files
         run: |
-          container_files=$(
-            git diff --name-only \
-              ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} -- \
-              '**/container/container.def' \
-              '**/container/base_image.sif'
-          )
-          if [ -n "$container_files" ]; then
-            # Format the list of changed container files for better readability in the error message
-            # Using %0A for newlines to ensure the message is properly formatted in the GitHub Actions log
-            formatted=$(echo "$container_files" | sed 's/^/  /' | tr '\n' '%0A')
-            msg="Changes to container definition files detected.%0A${formatted}%0A%0A"
-            msg+="To change container-related files, open a separate pull request only with those changes."
-            echo "::error::${msg}"
+          if [[ $CONTAINERS_CHANGES == 'true' && $NON_CONTAINERS_CHANGES == 'true' ]]; then
+            echo "::error::Container definition changes must be submitted in an isolated pull request,"\
+              "with no other changes. Please open a separate PR for container-related files."
             exit 1
           fi
   
@@ -68,47 +79,35 @@ jobs:
           date=$(TZ='Australia/Sydney' date '+%FT%T %Z')
           echo "date=$date" >> "$GITHUB_OUTPUT"
 
-  get-changed-environments:
-    name: Get changed environments
+  get-environments:
+    name: Get environments
     runs-on: ubuntu-latest
+    needs: [parse_changed_files, sanity_checks]
     outputs:
-      dev_envs: ${{ steps.changed.outputs.dev_envs }}
-      stable_envs: ${{ steps.changed.outputs.stable_envs }}
+      dev_envs: ${{ steps.get-environments.outputs.dev_envs }}
+      stable_envs: ${{ steps.get-environments.outputs.stable_envs }}
+    env:
+      DEV_ENVS_FILES: ${{ needs.parse_changed_files.outputs.dev_envs_files }}
+      STABLE_ENVS_FILES: ${{ needs.parse_changed_files.outputs.stable_envs_files }}
+      NON_ENVS: ${{ needs.parse_changed_files.outputs.non_envs }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
       - name: Get changed environments
-        id: changed
+        id: get-environments
         run: |
-          env_changes=$(
-            git diff --name-only \
-              ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} -- \
-              environments/
+          # Get DEVELOPMENT environments
+          dev_envs=$(
+            echo "$DEV_ENVS_FILES" | jq -c '[.[] | split("/")[1]] | unique'
           )
-          
-          dev_envs=[]
-          stable_envs=[]
-
-          if [ -z "$env_changes" ]; then
-            # No changes in the `environments` folder. 
-            # Deploy a STABLE TEST_ENV environment in STAGING
-            stable_envs=$(jq -cn --arg e ${{ env.TEST_ENV }} '[$e]')
-          else
-            # Get unique environment names that changed
-            envs=$(
-              echo "$env_changes" \
-              | cut -d'/' -f2 \
-              | sort -u \
+          # Get STABLE environments
+          stable_envs=$(
+            echo "$STABLE_ENVS_FILES" | jq -c '[.[] | split("/")[1]] | unique'
+          )
+          # If there are changes that don't involve the `environments` folder,
+          # add a vars.TEST_ENV environment to the STABLE ones
+          if [[ $NON_ENVS == true ]]; then
+            stable_envs=$(
+              echo "$stable_envs" | jq -c '. + ["${{ vars.TEST_ENV }}"] | unique'
             )
-            for env in $envs; do
-              if echo "$env_changes" | grep -q "^environments/$env/environment_dev.yml"; then
-                dev_envs=$(echo "$dev_envs" | jq -c --arg e "$env" '. += [$e]')
-              else
-                stable_envs=$(echo "$stable_envs" | jq -c --arg e "$env" '. += [$e]')
-              fi
-            done
           fi
           echo "dev_envs=$dev_envs" >> $GITHUB_OUTPUT
           echo "stable_envs=$stable_envs" >> $GITHUB_OUTPUT
@@ -116,11 +115,11 @@ jobs:
   set_version_dev:
     name: Set version for DEVELOPMENT environments
     runs-on: ubuntu-latest
-    needs: get-changed-environments
+    needs: get-environments
     outputs:
       version: ${{ steps.set-version.outputs.version }}
     # Only run if there are envs to deploy
-    if: needs.get-changed-environments.outputs.dev_envs != '[]'
+    if: needs.get-environments.outputs.dev_envs != '[]'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -134,11 +133,11 @@ jobs:
   set_version_stable:
     name: Set version for STABLE environments
     runs-on: ubuntu-latest
-    needs: get-changed-environments
+    needs: get-environments
     outputs:
       version: ${{ steps.set-version.outputs.version }}
     # Only run if there are envs to deploy
-    if: needs.get-changed-environments.outputs.stable_envs != '[]'
+    if: needs.get-environments.outputs.stable_envs != '[]'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -151,10 +150,10 @@ jobs:
 
   deploy_development_staging:
     name: Deploy DEVELOPMENT ${{ matrix.environment }} environment to STAGING
-    needs: [sanity_checks, get-changed-environments, set_version_dev]
+    needs: [get-environments, set_version_dev]
     strategy:
       matrix:
-        environment: ${{ fromJson(needs.get-changed-environments.outputs.dev_envs) }}
+        environment: ${{ fromJson(needs.get-environments.outputs.dev_envs) }}
     uses: ./.github/workflows/deploy_env.yml
     with:
       environment: "${{ matrix.environment }}"
@@ -167,10 +166,10 @@ jobs:
   
   deploy_stable_staging:
     name: Deploy STABLE ${{ matrix.environment }} environment to STAGING
-    needs: [sanity_checks, get-changed-environments, set_version_stable]
+    needs: [get-environments, set_version_stable]
     strategy:
       matrix:
-        environment: ${{ fromJson(needs.get-changed-environments.outputs.stable_envs) }}
+        environment: ${{ fromJson(needs.get-environments.outputs.stable_envs) }}
     uses: ./.github/workflows/deploy_env.yml
     with:
       environment: "${{ matrix.environment }}"
@@ -184,13 +183,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-    needs: 
-      - sanity_checks
-      - get-changed-environments
-      - set_version_dev
-      - set_version_stable
-    # Run if neither of the needed job failed but run if any was skipped
-    if: always() && !failure() && !cancelled()
+    needs: [set_version_dev,set_version_stable]
+    # Run if at least one of set_version_dev or set_version_stable succeeded and neither failed
+    if: always() && !failure() && !cancelled() && (needs.set_version_dev.result == 'success' || needs.set_version_stable.result == 'success')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -222,9 +217,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-    needs: [get-date, deploy_development_staging, deploy_stable_staging]
-    # Run also if any needed job failed or was skipped
-    if: always() && !cancelled()
+    needs: [get-date, deploy_development_staging, deploy_stable_staging, initialise_pr_comment]
+    # Run if initialise_pr_comment is successful
+    if: always() && !cancelled() && needs.initialise_pr_comment.result == 'success'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -268,8 +263,7 @@ jobs:
     permissions:
       pull-requests: write
     needs: [get-date, initialise_pr_comment, deploy_development_staging, deploy_stable_staging]
-    # Run if the workflow was cancelled
-    # And only if initialise_pr_comment is successful, otherwise we won't have the pr_init_info artifact
+    # Run if the workflow was cancelled and initialise_pr_comment is successful
     if: cancelled() && needs.initialise_pr_comment.result == 'success'
     steps:
       - name: Checkout repository

@@ -28,16 +28,31 @@ source "$CONFIG"
 if [[ -z "$pr_number" ]]; then
     # If no pr number is provided, only delete the files associated with the current version
     echo "Deleting STAGING files associated to version '$MODULE_VERSION':"
-    delete_version
+    delete_files_in_manifest
 else
-    # If pr number is provided, delete all files associated with the same pr_number
+    # If pr number is provided, delete all files associated with that pr_number
+    # Define regex to find all manifests of env versions associated with the pr_number
     regex=".*/.*-pr${pr_number}[^0-9]*/${MANIFEST_FILE_NAME}$"
-    # Find all manifest files of env versions associated with the pr_number
-    # and delete all those versions
+    # We need to find both DEVELOPMENT and STABLE environments.
+    # The DEVELOPMENT environment directory is ENV_DIR (because we run this within a workflow without
+    # is_stable and its default value is false)
+    # The STABLE environment directory is derived from ENV_DIR by removing the DEVELOPMENT_STAGING_BASE_DIR
+    # prefix and adding the STABLE_STAGING_BASE_DIR prefix instead.
+    development_env_dir="$ENV_DIR"
+    stable_env_dir="$STABLE_STAGING_BASE_DIR/${ENV_DIR#$DEVELOPMENT_STAGING_BASE_DIR/}"
+    # Only add directories if they exist, otherwise the find command below would fail
+    dirs=()
+    if [[ -d "$development_env_dir" ]]; then
+      dirs+=("$development_env_dir")
+    fi
+    if [[ -d "$stable_env_dir" ]]; then
+      dirs+=("$stable_env_dir")
+    fi
+    # Find all manifest files of env versions associated with the pr_number and delete all the related files
     while IFS= read -r manifest_file; do
-        delete_version "$manifest_file"
+        delete_files_in_manifest "$manifest_file"
     done < <(
-      find "$(dirname "$ENV_DIR")" \
+      find "${dirs[@]}" \
       -type f \
       -regextype posix-extended \
       -regex "$regex"

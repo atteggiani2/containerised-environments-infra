@@ -1,0 +1,82 @@
+name: Parse Changed Files
+description: |
+  Parse the changed files in the current commit/PR and determine which categories of files have been
+  changed (e.g. container-related, environment-related, etc.) based on predefined filters.
+  For each predefined filter, the action will output:
+    - <filter_name>: a boolean indicating whether any files matching that filter were changed
+    - <filter_name>_files: a JSON Array of the changed files that match that filter
+  
+  The predefined filters can be found in the filters.yml file:
+    - containers: files related to container definitions and images
+    - non_containers: infrastructural files that are not related to container definitions and images
+    - dev_envs: development environment definitions
+    - stable_envs: files in the "environments" folder with exception of files related to containers and development environment definitions
+    - non_envs: infrastructural files not related to containers or environments
+
+outputs:
+  containers:
+    value: ${{ steps.set-outputs.outputs.containers }}
+    description: Whether any container-related files were changed
+  containers_files:
+    value: ${{ steps.set-outputs.outputs.containers_files }}
+    description: A JSON Array of the changed container-related files
+  non_containers:
+    value: ${{ steps.set-outputs.outputs.non_containers }}
+    description: Whether any non-container-related files were changed
+  non_containers_files:
+    value: ${{ steps.set-outputs.outputs.non_containers_files }}
+    description: A JSON Array of the changed non-container-related files
+  dev_envs:
+    value: ${{ steps.set-outputs.outputs.dev_envs }}
+    description: Whether any development environment definition files were changed
+  dev_envs_files:
+    value: ${{ steps.set-outputs.outputs.dev_envs_files }}
+    description: A JSON Array of the changed development environment definition files
+  stable_envs:
+    value: ${{ steps.set-outputs.outputs.stable_envs }}
+    description: Whether any stable environment definition files were changed
+  stable_envs_files:
+    value: ${{ steps.set-outputs.outputs.stable_envs_files }}
+    description: A JSON Array of the changed stable environment definition files
+  non_envs:
+    value: ${{ steps.set-outputs.outputs.non_envs }}
+    description: Whether any non-environment-related files were changed
+  non_envs_files:
+    value: ${{ steps.set-outputs.outputs.non_envs_files }}
+    description: A JSON Array of the changed non-environment-related files
+runs:
+  using: "composite"
+  steps:
+    - name: Parse changed files
+      id: changed-files
+      uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      with:
+        predicate-quantifier: 'every'
+        list-files: json
+        filters: ./.github/actions/parse_changed_files/filters.yml
+    
+    - name: Set outputs
+      id: set-outputs
+      env:
+        CONTAINERS: ${{ steps.changed-files.outputs.containers }}
+        CONTAINERS_FILES: ${{ steps.changed-files.outputs.containers_files }}
+        NON_CONTAINERS: ${{ steps.changed-files.outputs.non_containers }}
+        NON_CONTAINERS_FILES: ${{ steps.changed-files.outputs.non_containers_files }}
+        DEV_ENVS: ${{ steps.changed-files.outputs.dev_envs }}
+        DEV_ENVS_FILES: ${{ steps.changed-files.outputs.dev_envs_files }}
+        STABLE_ENVS: ${{ steps.changed-files.outputs.stable_envs }}
+        STABLE_ENVS_FILES: ${{ steps.changed-files.outputs.stable_envs_files }}
+        NON_ENVS: ${{ steps.changed-files.outputs.non_envs }}
+        NON_ENVS_FILES: ${{ steps.changed-files.outputs.non_envs_files }}
+      shell: bash
+      run: |
+        echo "containers=$CONTAINERS" >> $GITHUB_OUTPUT
+        echo "containers_files=$CONTAINERS_FILES" >> $GITHUB_OUTPUT
+        echo "non_containers=$NON_CONTAINERS" >> $GITHUB_OUTPUT
+        echo "non_containers_files=$NON_CONTAINERS_FILES" >> $GITHUB_OUTPUT
+        echo "dev_envs=$DEV_ENVS" >> $GITHUB_OUTPUT
+        echo "dev_envs_files=$DEV_ENVS_FILES" >> $GITHUB_OUTPUT
+        echo "stable_envs=$STABLE_ENVS" >> $GITHUB_OUTPUT
+        echo "stable_envs_files=$STABLE_ENVS_FILES" >> $GITHUB_OUTPUT
+        echo "non_envs=$NON_ENVS" >> $GITHUB_OUTPUT
+        echo "non_envs_files=$NON_ENVS_FILES" >> $GITHUB_OUTPUT

@@ -12,10 +12,13 @@ on:
       - main
     paths:
       - '.github/actions/set_message/**'
+      - '.github/actions/create_pr_init_info_json/**'
+      - '.github/actions/create_all_deployments_info_json/**'
       - '.github/workflows/test_message_rendering.yml'
       - 'infrastructure/jinja2_templates/set_message_*.j2'
-      - 'infrastructure/json_schemas/hpc_target_deployment_info.schema.json'
       - 'infrastructure/json_schemas/all_deployments_info.schema.json'
+      - 'infrastructure/json_schemas/hpc_target_deployment_info.schema.json'
+      - 'infrastructure/json_schemas/pr_init_info.schema.json'
       - 'infrastructure/scripts/create_hpc_target_deployment_info_json.sh'
 
 env:

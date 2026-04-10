@@ -30,6 +30,12 @@ development_staging_base_dir="$admin_dir/staging/$development_subdir_name"
 logs_dir="$admin_dir/logs"
 # Path to the defaults config file
 config="$scripts_dir/config.sh"
+# Name for the containerised environments root dir
+containerised_envs_root_dir_name=containerised_envs
+# Name of the directory where all apps will be stored
+apps_dir_name=apps
+# Name of the directory where all modules will be stored
+modules_dir_name=modules
 
 # write export script
 cat > "$ENV_CONFIG_FILENAME" <<EOF
@@ -57,4 +63,7 @@ export STABLE_STAGING_BASE_DIR='$stable_staging_base_dir'
 export DEVELOPMENT_STAGING_BASE_DIR='$development_staging_base_dir'
 export LOGS_DIR='$logs_dir'
 export CONFIG='$config'
+export CONTAINERISED_ENVS_ROOT_DIR_NAME='$containerised_envs_root_dir_name'
+export APPS_DIR_NAME='$apps_dir_name'
+export MODULES_DIR_NAME='$modules_dir_name'
 EOF
