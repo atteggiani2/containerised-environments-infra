@@ -35,6 +35,15 @@ if [[ "$ENV_TYPE" != STABLE && "$ENV_TYPE" != DEVELOPMENT ]]; then
     exit 1
 fi
 
+# Path to the repository functions script
+export functions="$INFRA_SCRIPTS_DIR/functions.sh"
+if [ ! -f "$functions" ]; then
+    echo "Error! Functions file '${functions#$REPO_PATH/}' not found in the repository!" >&2
+    exit 1
+fi
+# Make functions available
+source "$functions"
+
 # Set BASE_DIR depending on the deployment stage and environment type:
 # - STABLE environment for PRODUCTION --> $STABLE_PRODUCTION_BASE_DIR
 # - STABLE environment for STAGING --> $STABLE_STAGING_BASE_DIR
@@ -85,16 +94,6 @@ if [[ "$DEPLOYMENT_STAGE" == PRODUCTION ]] || [[ "$DEPLOYMENT_STAGE" == STAGING 
     env_folder="$REPO_PATH/environments/$MODULE_NAME"
     # Path to the repository environment overrides directory
     export ENV_OVERRIDES_DIR="$env_folder/overrides"
-
-    # Path to the repository functions script
-    export FUNCTIONS="$INFRA_SCRIPTS_DIR/functions.sh"
-    if [ ! -f "$FUNCTIONS" ]; then
-        echo "Error! Functions file '${FUNCTIONS#$REPO_PATH/}' not found in the repository!" >&2
-        exit 1
-    fi
-
-    # Make functions available
-    source "$FUNCTIONS"
 
     # Source the specific environment configuration
     env_config_file="${CONFIG/#$DEFAULTS_DIR/$ENV_OVERRIDES_DIR}"
