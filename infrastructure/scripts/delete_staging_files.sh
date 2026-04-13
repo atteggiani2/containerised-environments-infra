@@ -51,6 +51,7 @@ elif [[ "${1:-}" == '--all' ]]; then
         rm -rf "$STABLE_STAGING_BASE_DIR"/* "$DEVELOPMENT_STAGING_BASE_DIR"/*
     fi
 else
+    pr_number="$1"
     # Pr number is provided: delete all files associated with that pr_number
     # Define regex to find all manifests of env versions associated with the pr_number
     regex=".*/.*-pr${pr_number}[^0-9]*/${MANIFEST_FILE_NAME}$"
