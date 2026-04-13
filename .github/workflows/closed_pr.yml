@@ -104,6 +104,8 @@ jobs:
   deploy_development_production:
     name: Deploy DEVELOPMENT ${{ matrix.environment }} environment to PRODUCTION
     needs: [get-environments, set_version]
+    # Only run if the PR was merged (not closed without merging)
+    if: needs.get-environments.outputs.envs_to_deploy != '[]' && github.event.pull_request.merged == true
     strategy:
       matrix:
         environment: ${{ fromJson(needs.get-environments.outputs.envs_to_deploy) }}
