@@ -10,6 +10,8 @@ inputs:
       - summary: A message to be added to the step summary
       - pr-init: A message to be added as a comment in the PR when the deployment is initiated
       - pr-update: A message to be added as a comment in the PR when the environment deployment ended
+      - pr-update-failure: A message to be added as a comment in the PR when the environment deployment failed
+        and no deployment information could be retrieved
       - pr-cancelled: A message to be added as a comment in the PR when the environment deployment workflow was cancelled
     type: string
     required: true
@@ -36,6 +38,8 @@ runs:
           jinja_template_file=set_message_pr_init.j2
         elif [[ '${{ inputs.message-type }}' == pr-update ]]; then
           jinja_template_file=set_message_pr_update.j2
+        elif [[ '${{ inputs.message-type }}' == pr-update-failure ]]; then
+          jinja_template_file=set_message_pr_update_failure.j2
         elif [[ '${{ inputs.message-type }}' == pr-cancelled ]]; then
           jinja_template_file=set_message_pr_cancelled.j2
         else

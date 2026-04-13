@@ -38,7 +38,7 @@ apps_dir_name=apps
 modules_dir_name=modules
 
 # write export script
-cat > "$ENV_CONFIG_FILENAME" <<EOF
+cat <<EOF
 export GROUP_OWNER='$GROUP_OWNER' 
 export OWNER='$OWNER' 
 export PBS_PROJECT='$PBS_PROJECT' 

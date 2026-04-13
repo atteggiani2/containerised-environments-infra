@@ -184,7 +184,7 @@ jobs:
             cat "${{ steps.set-pr-update-message.outputs.message-file-path }}"
           ) >> $GITHUB_STEP_SUMMARY
     
-  test_pr_init_and_cancelled_message:
+  test_messages_with_pr_init_json:
     runs-on: ubuntu-latest
     env:
         HPC_TARGET_DEPLOYMENT_INFO_JSON: ${{ github.workspace }}/pr_init_info.json
@@ -224,4 +224,19 @@ jobs:
             echo "# Test PR-cancelled Message"
             echo ""
             cat "${{ steps.set-pr-cancelled-message.outputs.message-file-path }}"
+          ) >> $GITHUB_STEP_SUMMARY
+      
+      - name: Test set_message action with pr-update-failure message
+        id: set-pr-update-failure-message
+        uses: ./.github/actions/set_message
+        with:
+          message-type: pr-update-failure
+          data-file: "${{ steps.create-pr-init-info.outputs.output-file }}"
+
+      - name: Set pr-update-failure message in the step summary
+        run: |
+          (
+            echo "# Test PR-update-failure Message"
+            echo ""
+            cat "${{ steps.set-pr-update-failure-message.outputs.message-file-path }}"
           ) >> $GITHUB_STEP_SUMMARY

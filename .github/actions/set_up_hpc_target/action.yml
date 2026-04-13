@@ -1,0 +1,158 @@
+name: Set up HPC target
+description: |
+  Set up the HPC target for deployment. This includes:
+  - Check GitHub Environment configuration for the HPC target
+  - Set up SSH access to the HPC target
+  - Create a temporary repository directory on the HPC target
+  - Set the env variable related to the hpc_target_deployment_info.json file path
+  - Create a configuration env script on the HPC target that can be sourced in subsequent step
+    to have the CI environment ready within the HPC system.
+  - Sync repository to the HPC target
+
+  This action exports the following environment variables that can be used in subsequent steps:
+  - REPO_PATH: the path to this repository synced on the HPC target
+  - HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH: the path to the hpc_target_deployment_info.json file on the HPC target
+  - HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER: the path to the hpc_target_deployment_info.json file on the GitHub runner
+  - ENV_CONFIG_FILENAME: the path to the environment configuration script on the HPC target that can be sourced to have the CI environment ready within the HPC system
+
+inputs:
+  target-name:
+    description: "The GitHub Environment corresponding to the HPC target to set up"
+    required: true
+  user:
+    description: "Username for SSH access to the HPC target."
+    required: true
+  host:
+    description: "Hostname for SSH access to the HPC target."
+    required: true
+  host-data:
+    description: "Hostname for SSH data transfer to the HPC target's data node."
+    required: true
+  ssh-key:
+    description: "Private SSH key for access to the HPC target."
+    required: true
+  ssh-key-passphrase:
+    description: "Passphrase for the private SSH key."
+    required: false
+outputs:
+  private-key-path:
+    description: "Path to the private SSH key file created in this action for SSH access to the HPC target. This can be used in subsequent steps that require SSH access to the HPC target."
+    value: ${{ steps.ssh.outputs.private-key-path }}
+runs:
+  using: composite
+  steps:
+    # Check that required inputs are non-empty
+    - name: Check inputs
+      shell: bash
+      run: |
+        if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+          set -x
+        fi
+        declare -A inputs=(
+          [target-name]="${{ inputs.target-name }}"
+          [user]="${{ inputs.user }}"
+          [host]="${{ inputs.host }}"
+          [host-data]="${{ inputs.host-data }}"
+          [ssh-key]="${{ inputs.ssh-key }}"
+        )
+        for name in "${!inputs[@]}"; do
+          if [[ -z "${inputs[$name]}" ]]; then
+            echo "::error::Input '$name' cannot be empty."
+            exit 1
+          fi
+        done
+        
+    # Sanity check that all needed GitHub Environment variables and secrets are non-empty
+    - name: Check GitHub Environment configuration
+      shell: bash
+      run: |
+        if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+          set -x
+        fi
+        vars_unset=false
+        vars=(
+          GROUP_OWNER
+          OWNER
+          PBS_PROJECT
+          PBS_STORAGE
+          SINGULARITY_EXE
+          JQ_EXE
+          STABLE_PRODUCTION_BASE_DIR
+        )
+        for var in "${vars[@]}"; do
+          if [[ -z "${!var:-}" ]]; then
+            msg="Variable '${var}' is unset or empty in the '${{ inputs.target-name }}' GitHub Environment."
+            msg+="Set this variable before re-running this workflow.%0A"
+            msg+="For further information, see the README section 'GitHub Environments Setup'."
+            echo "::error::$msg"
+            vars_unset=true
+          fi
+        done
+        [[ $vars_unset == true ]] && exit 1 || true
+
+    - name: Set up SSH
+      uses: access-nri/actions/.github/actions/setup-ssh@main
+      id: ssh
+      with:
+        hosts: |
+          ${{ inputs.host }}
+          ${{ inputs.host-data }}
+        private-key: ${{ inputs.ssh-key }}
+        private-key-passphrase: ${{ inputs.ssh-key-passphrase }}
+
+    # We create a temporary repository directory on the HPC system and set its path 
+    # as a GitHub environment variable that can be used in subsequent steps.
+    - name: Create repository directory
+      id: create-repo-dir
+      shell: bash
+      run: |
+        if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+          set -x
+        fi
+        repo_path=$(
+          ssh ${{ inputs.user }}@${{ inputs.host }} \
+          -i ${{ steps.ssh.outputs.private-key-path }} \
+          mktemp -d
+        )
+        echo "REPO_PATH=$repo_path" >> $GITHUB_ENV
+
+    # We set the env variable that stores the path to the hpc_target_deployment_info.json file containing
+    # information about the deployment to pass to the GitHub runner.
+    # For simplicity, we set this path to be within the REPO_PATH directory. This way, the file will
+    # also be deleted when we delete the REPO_PATH directory.
+    # We also set the path to the hpc_target_deployment_info.json file on the GitHub runner, which
+    # we will use to retrieve the file from the HPC system and upload it as an artifact at the end of the workflow.
+    - name: Set hpc_target_deployment_info.json path env variable
+      shell: bash
+      run: |
+        json_name='hpc_target_deployment_info_${{ job.check_run_id }}.json'
+        echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH=$REPO_PATH/$json_name" >> $GITHUB_ENV
+        echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER=${{ github.workspace }}/$json_name" >> $GITHUB_ENV
+
+    # We create the ENV_CONFIG_FILENAME bash script that exports multiple configuration 
+    # env variables when sourced. 
+    # This will allow us to source the script in any following step to have the CI environment 
+    # ready within the HPC system.
+    - name: Set configuration env script
+      shell: bash
+      run: |
+        env_config_filename='.env_config'
+        echo "ENV_CONFIG_FILENAME=$env_config_filename" >> $GITHUB_ENV
+        bash infrastructure/scripts/write_env_exports.sh > "$env_config_filename"
+
+    # Sync current directory (repository + ENV_CONFIG_FILENAME script) to the HPC system
+    - name: Sync repository to HPC system
+      id: sync-repo
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+          set -x
+        fi
+        rsync -e 'ssh -i ${{ steps.ssh.outputs.private-key-path }}' \
+          -avz \
+          --delete \
+          --exclude=/.git/ \
+          --exclude=/.github/ \
+          ./ \
+          "${{ inputs.user }}@${{ inputs.host-data }}:$REPO_PATH"

@@ -26,8 +26,8 @@ runs:
     - name: Create pr_init_info JSON
       shell: bash
       env:
-        COMMIT_SHA: ${{ github.sha }}
-        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.event.pull_request.head.sha }}
         WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         STARTED_AT: ${{ steps.get-date.outputs.started_at }}
         OUTPUT_FILE: ${{ inputs.output-file }}

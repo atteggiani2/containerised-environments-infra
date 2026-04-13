@@ -1,0 +1,94 @@
+name: Delete all the STAGING environments
+description: |
+  This workflow deletes the content of all STAGING directories across all available HPC targets.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # To ensure the removal of all the STAGING environments across all HPC targets, we detect all
+  # available hpc targets by joining together all entries in the `hpc_targets` files (default and overrides)
+  get-all-hpc-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      all-hpc-targets: ${{ steps.get-all-hpc-targets.outputs.all-hpc-targets }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Get all HPC targets
+        id: get-all-hpc-targets
+        run: |
+          # Find all `hpc_targets` files (defaults and overrides)
+          mapfile -t hpc_targets_files < <(
+            find defaults environments/*/overrides -type f -name hpc_targets
+          )
+          # Get all unique HPC targets from the files and set them as a JSON array
+          targets=$(
+            for file in "${hpc_targets_files[@]}"; do cat "$file"; echo; done \
+            | jq -Rcs 'split("\n") | map(select(length > 0)) | map(ascii_downcase) | unique'
+          )
+          echo "all-hpc-targets=$targets" >> $GITHUB_OUTPUT
+
+  delete-staging-environments:
+    needs: [get-all-hpc-targets]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        hpc-target: ${{ fromJson(needs.get-all-hpc-targets.outputs.all-hpc-targets) }}
+      fail-fast: false
+    environment: ${{ matrix.hpc-target }}
+    env:
+      GROUP_OWNER: '${{ vars.GROUP_OWNER }}'
+      OWNER: '${{ vars.OWNER }}'
+      PBS_PROJECT: '${{ vars.PBS_PROJECT }}'
+      PBS_STORAGE: '${{ vars.PBS_STORAGE }}'
+      SINGULARITY_EXE: '${{ vars.SINGULARITY_EXE }}'
+      JQ_EXE: '${{ vars.JQ_EXE }}'
+      STABLE_PRODUCTION_BASE_DIR: '${{ vars.STABLE_PRODUCTION_BASE_DIR }}'
+      MODULE_NAME: dummy_name
+      MODULE_VERSION: dummy_version
+      ENV_TYPE: STABLE
+      HPC_TARGET: ${{ matrix.hpc-target }}
+      STARTED_AT: dummy_date
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      
+      # We set this here, because the runner.debug context is not available within the job env
+      - name: Set debug mode
+        run: |
+          # echo "CONTAINERISED_ENVS_DEBUG=${{ runner.debug }}" >> $GITHUB_ENV
+          echo "CONTAINERISED_ENVS_DEBUG=1" >> $GITHUB_ENV
+      
+      - name: Set up HPC target
+        uses: ./.github/actions/set_up_hpc_target
+        id: set-up-hpc-target
+        with:
+          target-name: ${{ matrix.hpc-target }}
+          user: ${{ secrets.USER }}
+          host: ${{ secrets.HOST }}
+          host-data: ${{ secrets.HOST_DATA || secrets.HOST }}
+          ssh-key: ${{ secrets.SSH_KEY }}
+          ssh-key-passphrase: ${{ secrets.SSH_KEY_PASSPHRASE }}
+    
+      - name: Delete all staging files
+        run: |
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.set-up-hpc-target.outputs.private-key-path }} /bin/bash <<EOT
+            set -euo pipefail
+            if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
+              set -x
+            fi
+            # Set configuration environment
+            source '$REPO_PATH/$ENV_CONFIG_FILENAME'
+            # Delete staging files
+            "\$INFRA_SCRIPTS_DIR/delete_staging_files.sh" --all
+          EOT
+    
+      - name: Delete repository on HPC system
+        if: always() && steps.set-up-hpc-target.outcome == 'success'
+        run: |
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} \
+            -i ${{ steps.set-up-hpc-target.outputs.private-key-path }} /bin/bash <<EOT
+            rm -rf '$REPO_PATH'
+          EOT

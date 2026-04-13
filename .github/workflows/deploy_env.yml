@@ -60,6 +60,16 @@ jobs:
             echo "::error::'staging' input must be true when 'production' is true."
             exit 1
           fi
+  
+  approval-for-production-deployment:
+    name: Approval for production deployment
+    runs-on: ubuntu-latest
+    environment: production
+    needs: sanity_checks
+    if: inputs.production == true
+    steps:
+      - name: Approval granted
+        run: echo "Production deployment approved."
 
   get-date:
     name: Get current date
@@ -101,8 +111,7 @@ jobs:
           fi
           # Get unique HPC targets from the file and set as output in JSON array format
           targets=$(
-            jq -Rcs 'split("\n") | map(select(length > 0)) | unique' \
-              "$hpc_targets_file"
+            jq -Rcs 'split("\n") | map(select(length > 0)) | map(ascii_downcase) | unique' "$hpc_targets_file"
           )
           echo "hpc-targets=$targets" >> $GITHUB_OUTPUT
           echo "hpc-targets-file=$hpc_targets_file" >> $GITHUB_OUTPUT
@@ -121,8 +130,10 @@ jobs:
           done
 
   deploy:
-    needs: [sanity_checks, get-date, get-hpc-targets]
+    needs: [sanity_checks, approval-for-production-deployment, get-date, get-hpc-targets]
     runs-on: ubuntu-latest
+    #  Also run if approval-for-production-deployment is skipped (i.e., when inputs.production is false)
+    if: always() && !cancelled() && needs.approval-for-production-deployment.result != 'failure'
     concurrency:
       group: "${{ matrix.hpc-target }}-${{ inputs.environment }}-${{ inputs.version }}"
       cancel-in-progress: true
@@ -139,7 +150,6 @@ jobs:
       SINGULARITY_EXE: '${{ vars.SINGULARITY_EXE }}'
       JQ_EXE: '${{ vars.JQ_EXE }}'
       STABLE_PRODUCTION_BASE_DIR: '${{ vars.STABLE_PRODUCTION_BASE_DIR }}'
-      ENV_CONFIG_FILENAME: .env_config
       MODULE_NAME: '${{ inputs.environment }}'
       MODULE_VERSION: '${{ inputs.version }}'
       ENV_TYPE: ${{ inputs.is_stable == true && 'STABLE' || 'DEVELOPMENT' }}
@@ -154,101 +164,27 @@ jobs:
           # echo "CONTAINERISED_ENVS_DEBUG=${{ runner.debug }}" >> $GITHUB_ENV
           echo "CONTAINERISED_ENVS_DEBUG=1" >> $GITHUB_ENV
       
-      # Sanity check that all needed GitHub vars are set for the target GitHub Environment
-      - name: Check GitHub Environment configuration
-        run: |
-          if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
-            set -x
-          fi
-          vars_unset=false
-          vars=(
-            GROUP_OWNER
-            OWNER
-            PBS_PROJECT
-            PBS_STORAGE
-            SINGULARITY_EXE
-            STABLE_PRODUCTION_BASE_DIR
-          )
-          for var in "${vars[@]}"; do
-            if [[ -z "${!var:-}" ]]; then
-              msg="Variable '${var}' is unset or empty in the '${{ matrix.hpc-target }}' GitHub Environment."
-              msg+="Set this variable before running this workflow.%0A"
-              msg+="For further information, see the README section 'GitHub Environment Setup'."
-              echo "::error::$msg"
-              vars_unset=true
-            fi
-          done
-          [[ $vars_unset == true ]] && exit 1 || true
-  
-      - name: Set up SSH
-        uses: access-nri/actions/.github/actions/setup-ssh@main
-        id: ssh
+      - name: Set up HPC target
+        uses: ./.github/actions/set_up_hpc_target
+        id: set-up-hpc-target
         with:
-          hosts: |
-            ${{ secrets.HOST }}
-            ${{ secrets.HOST_DATA }}
-          private-key: ${{ secrets.SSH_KEY }}
-
-      # We create a temporary repository directory on the HPC system and set its path 
-      # as a GitHub environment variable that can be used in subsequent steps.
-      - name: Create repository directory
-        id: create-repo-dir
-        run: |
-          set -u
-          if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
-            set -x
-          fi
-          repo_path=$(
-            ssh -v ${{ secrets.USER }}@${{ secrets.HOST }} \
-            -i ${{ steps.ssh.outputs.private-key-path }} \
-            mktemp -d
-          )
-          echo "REPO_PATH=$repo_path" >> $GITHUB_ENV
-      
-      # We set the env variable that stores the path to the hpc_target_deployment_info.json file containing information about the
-      # deployment to pass the GitHub runner.
-      # For simplicity, we set this path to be within the REPO_PATH dir that has already been created. This way, the file will
-      # also be deleted at the end of the workflow when we delete the REPO_PATH directory.
-      # We also set the path to the hpc_target_deployment_info.json file on the GitHub runner, which we will use to retrieve
-      # the file from the HPC system and upload it as an artifact at the end of the workflow.
-      - name: Set hpc_target_deployment_info.json path env variable
-        run: |
-          json_name='hpc_target_deployment_info_${{ job.check_run_id }}.json'
-          echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH=$REPO_PATH/$json_name" >> $GITHUB_ENV
-          echo "HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER=${{ github.workspace }}/$json_name" >> $GITHUB_ENV
-
-      # We create the ENV_CONFIG_FILENAME bash script that exports multiple configuration 
-      # env variables when sourced. 
-      # This will allow us to source the script in any following step to have the CI environment 
-      # ready within the HPC system.
-      - name: Set configuration env script
-        run: bash infrastructure/scripts/write_env_exports.sh
-
-      - name: Sync repository to HPC system
-        id: sync-repo
-        run: |
-          set -euo pipefail
-          if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
-            set -x
-          fi
-          rsync -e 'ssh -i ${{ steps.ssh.outputs.private-key-path }}' \
-            -avz \
-            --delete \
-            --exclude=/.git/ \
-            --exclude=/.github/ \
-            ./ \
-            "${{ secrets.USER }}@${{ secrets.HOST_DATA }}:$REPO_PATH"
+          target-name: ${{ matrix.hpc-target }}
+          user: ${{ secrets.USER }}
+          host: ${{ secrets.HOST }}
+          host-data: ${{ secrets.HOST_DATA || secrets.HOST }}
+          ssh-key: ${{ secrets.SSH_KEY }}
+          ssh-key-passphrase: ${{ secrets.SSH_KEY_PASSPHRASE }}
 
       - name: Initialise Admin dirs
         if: inputs.staging
         run: |
-          ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.ssh.outputs.private-key-path }} /bin/bash <<EOT
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.set-up-hpc-target.outputs.private-key-path }} /bin/bash <<EOT
             set -euo pipefail
             if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
               set -x
             fi
             # Set configuration environment
-            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            source '$REPO_PATH/$ENV_CONFIG_FILENAME'
             "\$INFRA_SCRIPTS_DIR/initialise_admin_dirs.sh"
           EOT
 
@@ -258,14 +194,14 @@ jobs:
         run: |
           # Run deployment
           ssh ${{ secrets.USER }}@${{ secrets.HOST }} \
-            -i ${{ steps.ssh.outputs.private-key-path }} \
+            -i ${{ steps.set-up-hpc-target.outputs.private-key-path }} \
             /bin/bash <<EOT
             set -euo pipefail
             if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
               set -x
             fi
             # Set configuration environment
-            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            source '$REPO_PATH/$ENV_CONFIG_FILENAME'
             # Set job name prefix
             export JOB_NAME_PREFIX=staging
             # Set DEPLOYMENT_STAGE to STAGING
@@ -279,14 +215,14 @@ jobs:
         run: |
           # Run deployment
           ssh ${{ secrets.USER }}@${{ secrets.HOST }} \
-            -i ${{ steps.ssh.outputs.private-key-path }} \
+            -i ${{ steps.set-up-hpc-target.outputs.private-key-path }} \
             /bin/bash <<EOT
             set -euo pipefail
             if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
               set -x
             fi
             # Set configuration environment
-            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            source '$REPO_PATH/$ENV_CONFIG_FILENAME'
             # Set job name prefix
             export JOB_NAME_PREFIX=production
             # Set DEPLOYMENT_STAGE to PRODUCTION
@@ -301,7 +237,7 @@ jobs:
         if: always() && !cancelled() && inputs.staging == true
         id: get-deployment-info
         run: |
-          if ! rsync -e "ssh -i ${{ steps.ssh.outputs.private-key-path }}" \
+          if ! rsync -e "ssh -i ${{ steps.set-up-hpc-target.outputs.private-key-path }}" \
             ${{ secrets.USER }}@${{ secrets.HOST }}:"$HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH" \
             "$HPC_TARGET_DEPLOYMENT_INFO_JSON_PATH_ON_GITHUB_RUNNER"; then
               echo "::warning::Failed to retrieve hpc_target_deployment_info JSON file from HPC system. Creating JSON file:"
@@ -338,21 +274,21 @@ jobs:
         # (e.g., closed PR)
         if: inputs.production == true || inputs.staging == false
         run: |
-          ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.ssh.outputs.private-key-path }} /bin/bash <<EOT
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} -i ${{ steps.set-up-hpc-target.outputs.private-key-path }} /bin/bash <<EOT
             set -euo pipefail
             if [[ ${CONTAINERISED_ENVS_DEBUG:-0} == 1 ]]; then
               set -x
             fi
             # Set configuration environment
-            source '$REPO_PATH/${{ env.ENV_CONFIG_FILENAME }}'
+            source '$REPO_PATH/$ENV_CONFIG_FILENAME'
             # Delete staging files
             "\$INFRA_SCRIPTS_DIR/delete_staging_files.sh" ${{ github.event.number }}
           EOT
 
       - name: Delete repository on HPC system
-        if: always() && steps.sync-repo.outcome == 'success'
+        if: always() && steps.set-up-hpc-target.outcome == 'success'
         run: |
           ssh ${{ secrets.USER }}@${{ secrets.HOST }} \
-            -i ${{ steps.ssh.outputs.private-key-path }} /bin/bash <<EOT
+            -i ${{ steps.set-up-hpc-target.outputs.private-key-path }} /bin/bash <<EOT
             rm -rf '$REPO_PATH'
           EOT

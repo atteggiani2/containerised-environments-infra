@@ -62,6 +62,7 @@ When a PRODUCTION environment is released, the same deployment script is run, bu
 This allows the staging directory to have the same exact structure and files as the related production directory, so STAGING modules can be tested before being released in PRODUCTION by running the same `module load ...` commands that would be run for PRODUCTION modules.
 The only change would be the `module use ...` command, that would need to be specific to the staging directory (`staging_base_dir`).
 
+We define the `production` GitHub environment to grant an extra level of security for environemnts deployed for production (both `STABLE` or `DEVELOPMENT`).
 
 ## Things to add
 

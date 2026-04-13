@@ -35,14 +35,14 @@ runs:
       run: |
         # Make sure the directory exists
         if [[ ! -d "$JSON_DIR" ]]; then
-          echo ":error:Directory '$JSON_DIR' does not exist."
+          echo "::error::Directory '$JSON_DIR' does not exist."
           exit 1
         fi
         # Find all JSON files in the JSON directory
         mapfile -t json_files < <(find "$JSON_DIR" -maxdepth 1 -name "*.json" -type f)
         # Make sure at least one file is found
         if [[ ${#json_files[@]} -eq 0 ]]; then
-          echo ":error:No JSON files found in '$JSON_DIR'."
+          echo "::error::No JSON files found in '$JSON_DIR'."
           exit 1
         fi
         # Merge HPC target deployment info JSONs with the same name by concatenating their deployments arrays
@@ -62,8 +62,8 @@ runs:
     - name: Create all_deployments_info JSON
       shell: bash
       env:
-        COMMIT_SHA: ${{ github.sha }}
-        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.event.pull_request.head.sha || github.sha }}
         WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         STARTED_AT: ${{ inputs.started-at }}
         MERGED_JSONS: ${{ steps.merge-jsons.outputs.merged-jsons }}

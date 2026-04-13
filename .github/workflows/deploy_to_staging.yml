@@ -234,17 +234,22 @@ jobs:
       
       - name: Create all_deployments_info JSON
         id: create-all-deployments-info
+        continue-on-error: true
         uses: ./.github/actions/create_all_deployments_info_json
         with:
           started-at: "${{ needs.get-date.outputs.date }}"
           hpc-target-deployment-info-json-dir: "${{ steps.download-artifacts.outputs.download-path }}"
+    
+      - name: Download pr-init-info JSON as artifact
+        id: download-pr-init-info
+        uses: actions/download-artifact@v8
 
       - name: Set PR message
         id: set-pr-message
         uses: ./.github/actions/set_message
         with:
           message-type: pr-update
-          data-file: "${{ steps.create-all-deployments-info.outputs.output-file }}"
+          data-file: ${{ steps.create-all-deployments-info.outcome == 'success' && steps.create-all-deployments-info.outputs.output-file || format('{0}/pr_init_info.json', steps.download-pr-init-info.outputs.download-path) }}
 
       - name: Comment on PR with deployment information
         uses: access-nri/actions/.github/actions/comment@davide/add-message-file
@@ -254,6 +259,7 @@ jobs:
     
       - name: Upload all_deployments_info JSON as artifact
         uses: actions/upload-artifact@v7
+        if: steps.create-all-deployments-info.outcome == 'success'
         with:
           path: "${{ steps.create-all-deployments-info.outputs.output-file }}"
           name: all_deployments_info
