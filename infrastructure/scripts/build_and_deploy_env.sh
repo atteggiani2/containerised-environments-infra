@@ -103,6 +103,9 @@ add_bind_str=$(printf ",%q" "${add_to_bind[@]}")
 # Initialise singularity
 module load -v singularity
 
+# Set host_executables as an array
+IFS=',' read -ra host_executables <<< "$HOST_EXECUTABLES"
+
 singularity -s exec \
     --bind "${BIND_STR}${add_bind_str}" \
     "$RUNTIME_CONTAINER_IMAGE_PATH" \
@@ -129,6 +132,11 @@ echo ''   # ensure newline after cat output
     --no-rc \
     --no-env \
     --root-prefix "$TEMP_WORKING_DIR"
+
+# Delete executables in host_executables
+for exe in "${host_executables[@]}"; do
+    rm -f "$INTERNAL_ENV_BIN_DIR/\$exe"
+done
 
 # Clear the cache to save space
 "$MAMBA_EXE" clean -afy
@@ -217,7 +225,6 @@ echo "Launcher script deployed to '$LAUNCHER_SCRIPT_PATH'"
 
 # Create symlinks to the launcher script for all binaries in the environment,
 # with exception of those in HOST_EXECUTABLES (that will not be linked)
-IFS=',' read -ra host_executables <<< "$HOST_EXECUTABLES"
 for binfile in "$TEMP_ENV_DIR"/bin/*; do
     binfile_name=$(basename "$binfile")
     if ! in_array "$binfile_name" "${host_executables[@]}"; then
