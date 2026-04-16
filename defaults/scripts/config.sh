@@ -7,7 +7,6 @@
 #
 # Overridable variables:
 # - INTERNAL_ENV_DIR --> Absolute path (must start with '/') where the environment will be located within the container
-# - MAMBA_INSTALLATION_DIR --> Directory where the micromamba executable is found (or installed), if no custom MAMBA_EXE is set
 # - MAMBA_EXE --> Executable used to manage conda environments
 # - ENV_PROMPT_MODIFIER --> The modifier that can be used to change the PS1 prompt after the environment is activated
 # - JQ_EXE --> Executable used to manage JSON files
@@ -209,15 +208,14 @@ if [[ "$DEPLOYMENT_STAGE" == PRODUCTION ]] || [[ "$DEPLOYMENT_STAGE" == STAGING 
     export MAX_DEV_ENV_VERSIONS=3
 
     ### Micromamba initialisation
-    # MAMBA_INSTALLATION_DIR is the directory where the micromamba executable used to manage environments is 
-    # installed if no custom MAMBA_EXE is used.
-    export mamba_installation_dir="${MAMBA_INSTALLATION_DIR:-"$containerised_envs_root_dir/micromamba_installation"}"
-    # MAMBA_EXE is the env variable that gets actually used to manage environment. If MAMBA_EXE is not defined or not found, 
-    # mamba_default_exe gets used instead. If mamba_default_exe cannot be found, micromamba gets initialised by installing the latest
-    # version of micromamba to the the mamba_default_exe path.
-    mamba_default_exe="$mamba_installation_dir/bin/micromamba"
-    export MAMBA_EXE="${MAMBA_EXE:-$mamba_default_exe}"
-    export mamba_download_url='https://micro.mamba.pm/api/micromamba/linux-64/latest'
+    # MAMBA_RUNTIME_EXE is the micromamba executable used to manage environments at runtime (not within the build/deployment!)
+    export MAMBA_RUNTIME_EXE="$containerised_envs_root_dir/micromamba_installation/micromamba"
+    export MAMBA_EXE="$MAMBA_RUNTIME_EXE"
+    # If MAMBA_RUNTIME_EXE is not defined or not found, a temporary micromamba executable (mamba_deployment_exe) gets installed
+    # for the build/deployment. This executable will then be copied to the MAMBA_RUNTIME_EXE path to be used at runtime.
+    # We install a temporary unique micromamba executable to avoid clashes with multiple installation of the same
+    # micromamba executable happening at the same time.
+    mamba_deployment_exe="$TEMP_WORKING_DIR/micromamba"
     # If the micromamba executable is not found or not executable, the latest version is installed
     if [ ! -x "$MAMBA_EXE" ]; then
         if [ ! -f "$MAMBA_EXE" ]; then # Micromamba exe not found
@@ -225,21 +223,23 @@ if [[ "$DEPLOYMENT_STAGE" == PRODUCTION ]] || [[ "$DEPLOYMENT_STAGE" == STAGING 
         else # Micromamba exe not executable
             echo "Micromamba executable '$MAMBA_EXE' is not executable."
         fi
-
-        if [ ! -x "$mamba_default_exe" ]; then # Default micromamba exe not executable 
-            if [ ! -f "$mamba_default_exe" ]; then # Default micromamba exe not found
-                mkdir -p $(dirname "$mamba_default_exe")
-                # Get micromamba latest version
-                echo "Installing micromamba's latest version:"
-                curl -L "$mamba_download_url" | tar -xvjO bin/micromamba > "$mamba_default_exe"
-            fi
-            # Set executable permissions
-            chmod u+x "$mamba_default_exe"
-            set_perms "$mamba_default_exe"
+        echo "Installing micromamba's latest version:"
+        mamba_download_url='https://micro.mamba.pm/api/micromamba/linux-64/latest'
+        curl -L "$mamba_download_url" | tar -xvjO bin/micromamba > "$mamba_deployment_exe"
+        # Set executable permissions
+        chmod u+x "$mamba_deployment_exe"
+        set_perms "$mamba_deployment_exe"
+        MAMBA_EXE="$mamba_deployment_exe"
+        # Copy the micromamba executable to the MAMBA_RUNTIME_EXE path to be used at runtime
+        # We double check that the destination directory exists before copying for race-condition
+        # when multiple envs are deployed at the same time
+        if [ ! -x "$MAMBA_RUNTIME_EXE" ]; then
+            mkdir -pv "$(dirname "$MAMBA_RUNTIME_EXE")"
+            cp -v "$MAMBA_EXE" "$MAMBA_RUNTIME_EXE"
         fi
-        MAMBA_EXE="$mamba_default_exe"
-        echo "Using micromamba executable: $MAMBA_EXE"
     fi
+    echo "Using micromamba executable: $MAMBA_EXE"
+    
     # Set ENV_PROMPT_MODIFIER
     export ENV_PROMPT_MODIFIER="${ENV_PROMPT_MODIFIER:-"($MODULE_NAME-$MODULE_VERSION) "}"
 
