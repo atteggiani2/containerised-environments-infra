@@ -138,9 +138,6 @@ for exe in "${host_executables[@]}"; do
     rm -f "$INTERNAL_ENV_BIN_DIR/\$exe"
 done
 
-# Clear the cache to save space
-"$MAMBA_EXE" clean -afy
-
 EOF
 
 ### CREATE SQUASHFS OVERLAY
