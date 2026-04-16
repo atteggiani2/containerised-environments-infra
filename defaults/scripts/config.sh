@@ -115,7 +115,7 @@ if [[ "$DEPLOYMENT_STAGE" == PRODUCTION ]] || [[ "$DEPLOYMENT_STAGE" == STAGING 
     # This path is added as an overlay when overlaying the squashfs to the container
     export INTERNAL_ENV_DIR=${INTERNAL_ENV_DIR:-"/$CONTAINERISED_ENVS_ROOT_DIR_NAME/$MODULE_NAME/$MODULE_VERSION"}
     # Sanity check on INTERNAL_ENV_DIR being an absolute path
-    if [ "$INTERNAL_ENV_DIR" != /* ]; then
+    if [[ "$INTERNAL_ENV_DIR" != /* ]]; then
         echo "INTERNAL_ENV_DIR must be an absolute path (must start with a forward slash). Got '$INTERNAL_ENV_DIR'" >&2
     fi
     # Absolute path where the environment binaries will be located within the container
