@@ -210,7 +210,7 @@ if [[ "$DEPLOYMENT_STAGE" == PRODUCTION ]] || [[ "$DEPLOYMENT_STAGE" == STAGING 
     ### Micromamba initialisation
     # MAMBA_RUNTIME_EXE is the micromamba executable used to manage environments at runtime (not within the build/deployment!)
     export MAMBA_RUNTIME_EXE="$containerised_envs_root_dir/micromamba_installation/micromamba"
-    export MAMBA_EXE="$MAMBA_RUNTIME_EXE"
+    export MAMBA_EXE="${MAMBA_EXE:-$MAMBA_RUNTIME_EXE}"
     # If MAMBA_RUNTIME_EXE is not defined or not found, a temporary micromamba executable (mamba_deployment_exe) gets installed
     # for the build/deployment. This executable will then be copied to the MAMBA_RUNTIME_EXE path to be used at runtime.
     # We install a temporary unique micromamba executable to avoid clashes with multiple installation of the same
